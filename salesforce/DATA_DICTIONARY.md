@@ -1,5 +1,5 @@
 # Precision Painting Plus — Salesforce Data Dictionary
-**Org:** Production (`katie@precisionpaintingplus.com`)
+**Org:** Production
 **Generated:** 2026-05-11
 **Scope:** Custom fields on core standard objects + all PPP-owned custom objects + flows, apex, validation rules, record types
 
@@ -3113,7 +3113,7 @@ _Label: Zip Code_
 | SFDC_Staff__c | Termination_Status_must_have_date | ✅ | Date required if the status is set to Terminated. |
 | Transaction__c | Deposited_Requires_Reference_ID | ✅ | You must enter a Reference ID if Deposited is True. |
 | Transaction__c | No_Transactions_on_Estimates | ✅ | Transaction and Attendance records are not allowed to be added to Estimate Work Orders. |
-| Transaction__c | only_allow_finance_team_in_final_status | ⛔ | Contact the finance team (ruben@precisionpaintingplus.com) to make changes. |
+| Transaction__c | only_allow_finance_team_in_final_status | ⛔ | Contact the finance team to make changes. |
 | User | FSK_User_Creation_Feature_Inactive | ✅ | FSSK Package: SFS Resource Type should only be used when the Field Service users automation feature in the Field Service Starter Kit Pack... |
 | User | FSK_User_Type_Is_Not_Community | ✅ | FSSK Package: This SFS Resource Type value should only be used for community user records |
 | User | FSK_User_Type_Is_Not_Standard | ✅ | FSSK Package: This SFS Resource Type value should only be used for users with a Salesforce user license |

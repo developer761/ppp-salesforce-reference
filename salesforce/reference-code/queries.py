@@ -14,7 +14,9 @@ from pathlib import Path
 
 import pandas as pd
 
-FIELD_MEMBER_PROFILE_ID = "00e6g000000WcklAAC"
+# Profile Id for the "*Standard.Field" rep profile — look up in your own org:
+#   sf data query -q "SELECT Id FROM Profile WHERE Name = '*Standard.Field'"
+FIELD_MEMBER_PROFILE_ID = "<FIELD_MEMBER_PROFILE_ID>"  # org-specific; do not hardcode in a public repo
 CASE_TYPE_WHITELIST = (
     "Estimator No Show",
     "Waiting for Estimate",
