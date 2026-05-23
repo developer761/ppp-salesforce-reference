@@ -32,6 +32,14 @@ How Precision Painting Plus measures Field Member reps today. These are the exac
   - **Don't use `WorkOrder.RevenuePerLaborDay__c`** (uses settled `NetValue__c` + only the actual side).
 - **Materials %:** `SUM(TotalNonBillablePurchases__c) / SUM(Quoted_Subtotal_with_Change_Order__c)` (weighted). Use `TotalNonBillablePurchases__c`, not `CostMaterials__c`. Lower is better.
 
+## KPI 4b — Crew Attendance Completeness (data-quality check; completed WOs, by `WorkOrder.OwnerId`, dated `EndDate`)
+The "logged subset only" filter in KPI 4 exists because crew attendance is frequently never entered on completed jobs. Tracking the gap turns it into something reps can act on.
+- **Completed WO universe:** `Status IN ('Closed','Complete Paid in Full')`, `EndDate` in period, by `OwnerId`.
+- **Missing attendance:** of those, the WOs with `LaborDaysActual__c = 0 OR LaborDaysActual__c = null` — i.e. no `WorkOrderCrew__c` ("Crew Attendance") child records have rolled up. (`LaborDaysActual__c` = sum of labor days from the related Crew Attendance records.)
+- **Completeness %** = logged ÷ completed; higher is better. Roughly two-thirds of completed WOs are logged org-wide — the same ~32% gap cited in KPI 4.
+- **Why it matters:** a no-attendance WO has `LaborDaysActual__c = 0`, so KPI 4 must exclude it; its revenue still lands elsewhere, so leaving it unlogged understates labor and (if not excluded) inflates Actual $/day ~3×. The `Add_Assigned_Labor_Crew` validation rule already forces the `Contractor__c` ("Assigned Labor Crew") lookup before close, but does **not** force attendance records — hence the gap.
+- **Rep follow-up list:** the specific missing WOs, grouped by `OwnerId`, with `WorkOrderNumber`, `Account.Name`, `Quoted_Subtotal_with_Change_Order__c`, `StartDate`, `EndDate`, `Contractor__r.Name`. SOQL in `reference-code/queries.py`. *(The rendered list is live customer/rep data — kept out of this repo per the curation rules.)*
+
 ## KPI 5 — Appointments Activity (Opportunity, by `OwnerId`)
 - **# appointments run:** `AppointmentDate__c` in period AND `Cancelled_Appointment__c = false`. (Context only — marketing-driven, no good/bad trend arrow.)
 - **% estimates sent:** of those appointments, the subset with `Estimate_Sent__c = true`. ↑ good.

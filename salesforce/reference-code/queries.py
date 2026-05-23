@@ -26,6 +26,7 @@ CASE_TYPE_WHITELIST = (
     "Other",
 )
 TARGET_ORG = "my-production"
+COMPLETED_WO_STATUSES = ("Closed", "Complete Paid in Full")
 
 _SF = shutil.which("sf") or "sf"
 
@@ -173,6 +174,91 @@ def open_cases_by_type(rep_ids: list[str]) -> pd.DataFrame:
             for r in rows
         ]
     )
+
+
+def attendance_completeness(
+    rep_ids: list[str], period_start: dt.date, period_end: dt.date
+) -> pd.DataFrame:
+    """Crew-attendance completeness on completed Work Orders, by rep.
+
+    A completed WO (Status Closed / Complete Paid in Full, by EndDate in the
+    period) is "missing attendance" when no Crew Attendance (`WorkOrderCrew__c`)
+    records have rolled up — i.e. `LaborDaysActual__c` is 0 or null. Returns one
+    row per rep with completed / logged / missing counts and completeness ratio.
+
+    This is the data-quality gate behind KPI 4 (Pricing Discipline): jobs with no
+    attendance have LaborDaysActual = 0 and must be excluded from the $/day ratios,
+    or Actual $/day inflates ~3x. See REP_PERFORMANCE_KPIS.md KPI 4b.
+    """
+    statuses = ",".join(f"'{s}'" for s in COMPLETED_WO_STATUSES)
+    window = (
+        f"EndDate >= {period_start.isoformat()}T00:00:00Z "
+        f"AND EndDate <= {period_end.isoformat()}T23:59:59Z "
+        f"AND Status IN ({statuses})"
+    )
+    completed = _soql(
+        f"SELECT OwnerId, COUNT(Id) cnt FROM WorkOrder "
+        f"WHERE OwnerId IN ({_ids_csv(rep_ids)}) AND {window} GROUP BY OwnerId"
+    )
+    missing = _soql(
+        f"SELECT OwnerId, COUNT(Id) cnt FROM WorkOrder "
+        f"WHERE OwnerId IN ({_ids_csv(rep_ids)}) AND {window} "
+        f"AND (LaborDaysActual__c = 0 OR LaborDaysActual__c = null) GROUP BY OwnerId"
+    )
+    comp = {r["OwnerId"]: int(r["cnt"]) for r in completed}
+    miss = {r["OwnerId"]: int(r["cnt"]) for r in missing}
+    out = []
+    for owner_id, total in comp.items():
+        n_missing = miss.get(owner_id, 0)
+        out.append(
+            {
+                "OwnerId": owner_id,
+                "completed": total,
+                "logged": total - n_missing,
+                "missing": n_missing,
+                "completeness": (total - n_missing) / total if total else None,
+            }
+        )
+    return pd.DataFrame(out)
+
+
+def workorders_missing_attendance(
+    rep_ids: list[str], period_start: dt.date, period_end: dt.date
+) -> pd.DataFrame:
+    """The actual completed WOs missing crew attendance, for a per-rep follow-up
+    list ("here are the jobs you still need to log attendance on").
+
+    One row per WO; group by OwnerId to build each rep's list. Columns mirror what
+    a rep needs to find the job. `Contractor__c` is the "Assigned Labor Crew"
+    lookup to Account, so the crew name comes from `Contractor__r.Name`.
+    """
+    statuses = ",".join(f"'{s}'" for s in COMPLETED_WO_STATUSES)
+    rows = _soql(
+        f"SELECT OwnerId, Owner.Name, WorkOrderNumber, Account.Name, "
+        f"Quoted_Subtotal_with_Change_Order__c, StartDate, EndDate, Contractor__r.Name "
+        f"FROM WorkOrder "
+        f"WHERE OwnerId IN ({_ids_csv(rep_ids)}) "
+        f"AND EndDate >= {period_start.isoformat()}T00:00:00Z "
+        f"AND EndDate <= {period_end.isoformat()}T23:59:59Z "
+        f"AND Status IN ({statuses}) "
+        f"AND (LaborDaysActual__c = 0 OR LaborDaysActual__c = null) "
+        f"ORDER BY Owner.Name, EndDate"
+    )
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "OwnerId": r["OwnerId"],
+                "rep": (r.get("Owner") or {}).get("Name"),
+                "work_order": r.get("WorkOrderNumber"),
+                "account": (r.get("Account") or {}).get("Name"),
+                "quoted_subtotal_with_co": float(r["Quoted_Subtotal_with_Change_Order__c"] or 0),
+                "start_date": (r.get("StartDate") or "")[:10],
+                "end_date": (r.get("EndDate") or "")[:10],
+                "assigned_labor_crew": (r.get("Contractor__r") or {}).get("Name"),
+            }
+        )
+    return pd.DataFrame(out)
 
 
 def balances_owed(rep_ids: list[str]) -> pd.DataFrame:
