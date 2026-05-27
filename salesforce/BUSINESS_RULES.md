@@ -53,8 +53,8 @@ A SOQL written for one fails on the other. Sales metrics use the Opportunity ver
 
 ## Lead source classification
 
-- **`Opportunity.LeadGroup__c`**: `'Self-Generated'` → self-gen; **every other value (and null) → marketing.**
-- Note: `Repeat` and `Referral` currently fall in the marketing bucket under PPP's rule, though they're really relationship leads — flagged as a possible future split.
+- **`Opportunity.LeadGroup__c`** *(self-gen bucket, updated 2026-05-21)*: `LeadGroup__c` ∈ {`'Self-Generated'`, `'Trade Show'`, `'Repeat'`, `'Referral'`} → **self-gen**; **every other value (and null) → marketing** (so self-gen + marketing always reconciles to the total).
+- The previously-flagged split is now in effect: `Repeat`, `Referral`, and `Trade Show` are counted as **self-gen** (relationship/earned leads), no longer marketing.
 
 ## Transactions (money flow)
 

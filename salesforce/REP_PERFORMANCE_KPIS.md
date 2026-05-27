@@ -6,6 +6,8 @@ How Precision Painting Plus measures Field Member reps today. These are the exac
 
 **Universe:** active `User` with Profile `*Standard.Field`. **Sales metrics attribute by `Opportunity.OwnerId`; WorkOrder metrics by `WorkOrder.OwnerId`; reviews by `Account.OwnerId`.**
 
+**Reporting period:** the standard quarterly scorecard reports the **just-completed fiscal quarter** (the "previous fiscal quarter," PFQ) — *not* the in-progress quarter — typically run ~the 5th of the following period so reps can finish entering the prior period's data. Most KPIs anchor on a single in-period date (`CloseDate` / WO `EndDate` / `AppointmentDate__c` / Transaction `Date__c`); **Commissions (KPI 9) is the exception** — it reconciles cumulatively over the current fiscal year (CFY-to-date).
+
 ---
 
 ## KPI 1 — Revenue Performance
@@ -19,7 +21,7 @@ How Precision Painting Plus measures Field Member reps today. These are the exac
 
 ## KPI 3 — Close Rate
 - For Opportunities **created** in the period (by `OwnerId`), fraction with `IsWon = true`.
-- **Self-gen** = `LeadGroup__c = 'Self-Generated'`; **Marketing** = everything else (+ null); **Overall** = combined. Three cells.
+- **Self-gen** = `LeadGroup__c` ∈ {`'Self-Generated'`, `'Trade Show'`, `'Repeat'`, `'Referral'`} *(updated 2026-05-21)*; **Marketing** = everything else (+ null); **Overall** = combined. Three cells.
 
 ## KPI 3b — Sales Mix (self-gen vs marketing share)
 - Of Closed-Won sales **closed** in the period (anchor `CloseDate` — note: different anchor than KPI 3), the **$-based** self-gen share: `SUM(QuotedSubtotalWithChangeOrder__c)` for self-gen ÷ total. (Count-based version also computable from the same query but not the committed metric.)
@@ -60,8 +62,8 @@ The "logged subset only" filter in KPI 4 exists because crew attendance is frequ
 - **Total Purchases:** `SUM(Amount__c)` for record type `Purchase`.
 
 ## KPI 9 — Commissions
-- **Draw Received:** from `User.Quarterly_Draw__c` (quarterly amount; scale by months for other periods). *(Actual per-rep values intentionally not in this doc — read from the field.)*
-- **Commissions Earned:** `SUM(Transaction__c.Amount__c)` where record type `Payment_Out`, `WorkOrder__c != null`, `Payee__r.Name = User.Name`, `Date__c` in period. (Not scoped to the rep's own WOs — the Payee=name match is the attribution. Watch for `<Name>-inactive`/`-portal` shadow Users.)
+- **Draw Received:** `User.Quarterly_Draw__c × fiscal-quarter index`, CFY-to-date cumulative (Q1→×1, Q2→×2, Q3→×3, Q4→×4) so it lines up with the CFY paid window. *(Actual per-rep values intentionally not in this doc — read from the field.)*
+- **Commissions Earned:** `SUM(Transaction__c.Amount__c)` where record type `Payment_Out`, `WorkOrder__c != null`, **`PayeeType__c = 'Sales'`**, **`Description__c LIKE '%Draw%'`**, `Date__c` in the **current fiscal year** (CFY — cumulative, not a single quarter). Attributed by Payee name = **`User.Name` OR `'LC ' + User.Name`** (the labor-company alias; payee naming is inconsistent across reps). Not scoped to the rep's own WOs. Watch for `<Name>-inactive`/`-portal` shadow Users. *(Redefined 2026-05-21.)*
 - **Difference** = Earned − Draw. >0 underpaid (green), <0 overpaid (red).
 
 ---
