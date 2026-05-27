@@ -34,6 +34,7 @@ This repository is publicly visible on the internet. Everything committed here c
 
 ### `command-center/` — the PPP Command Center app
 - **`REP_PROFILES_INTEGRATION_GUIDE.md`** — how to wire PPP's canonical KPIs into the Command Center's Rep Profiles page: data-flow, KPI map, correctness pitfalls, edge cases, validation checklist.
+- **`KPI_ALIGNMENT_REVIEW_2026-05-27.md`** — point-in-time audit of the Rep Profiles code (@ `e66ec60`) vs the current FPRC definitions, with ready-to-apply diffs (PFQ anchor, self-gen bucket, commissions, complaints, change orders).
 
 ### `playbooks/` — repeatable PPP Salesforce processes (conventions, sanitized)
 - **`licensee-onboarding.md`** — onboarding a new PPP licensee (permissions, branded document templates, app + email-flow branching).
