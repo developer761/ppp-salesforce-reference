@@ -40,6 +40,7 @@ This repository is publicly visible on the internet. Everything committed here c
 - **`licensee-onboarding.md`** — onboarding a new PPP licensee (permissions, branded document templates, app + email-flow branching).
 - **`sandbox-update-testing.md`** — testing managed-package upgrades / config changes in sandbox before production.
 - **`sdocs-templates.md`** — S-Docs / S-Sign document-template conventions and prod↔sandbox sync.
+- **`software-audit.md`** — monthly software license audit: platform cross-reference, Checkover field triage, cost consistency check, allocation monthly audit (reference).
 
 ---
 

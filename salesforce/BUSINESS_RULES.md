@@ -39,6 +39,20 @@ A SOQL written for one fails on the other. Sales metrics use the Opportunity ver
 - Field reps = active `User` records with **Profile name `*Standard.Field`** (~26 active).
 - The sales manager's team is tagged by the **`Sales_Team_Member`** permission set (membership tag only — no FLS on it). Read it dynamically; don't hardcode names.
 
+## ⚠️ License-type trap — counting Full Salesforce license users
+
+**Do not use `UserType = 'Standard'`** to count Full license users. It over-counts: it includes non-human integration users (e.g. Analytics Cloud Integration User, Sales Insights Integration User) that carry a different license type but share the `Standard` UserType.
+
+**Correct filter:** `Profile.UserLicense.Name = 'Salesforce'`
+
+```sql
+SELECT COUNT(Id) FROM User
+WHERE IsActive = true
+AND Profile.UserLicense.Name = 'Salesforce'
+```
+
+Similarly, **do not use the `SDocs_User` permission set** to count SDocs license holders — the perm set membership can diverge from the actual package license. Use `UserPackageLicense` filtered by the SDocs package ID instead.
+
 ## Work orders & "completed job" definition
 
 - **⚠️ Do not rely on `WorkOrder.IsClosed`.** It only flips true for `Status = 'Closed'` and misses `'Complete Paid in Full'` and `'Complete Balance Owed'`. **Filter on `Status` directly.**
