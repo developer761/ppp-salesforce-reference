@@ -14,9 +14,10 @@ Monthly process that cross-references active `Software__c` records in Salesforce
 | Salesforce Full | `User WHERE Profile.UserLicense.Name = 'Salesforce'` |
 | Salesforce Portal | `User WHERE UserType = 'PowerPartner'` |
 | SDocs | `UserPackageLicense WHERE PackageLicenseId = <package_id>` |
-| S-Sign | `PermissionSetAssignment WHERE PermissionSet.Name = 'SSign_Experience_Cloud_User'` |
+| S-Sign | `PermissionSetAssignment WHERE PermissionSet.Name = 'SSign_Experience_Cloud_User'` — count + email cross-ref via `Assignee.Email` |
 | Dialpad | REST API — `/users` endpoint |
 | Google PPP | GAM CLI — `gam print users` |
+| Google O3 | GAM CLI — separate config directory for O3 workspace |
 | Slack PPP | Slack API — `users.list` |
 | Slack O3 | Slack API — `users.list` (separate workspace) |
 
@@ -30,7 +31,9 @@ The script (`software_audit.py`) handles all data collection automatically:
 2. Compares counts against contract limits
 3. Cross-references platform user emails against `Software__c` active records — flags anyone in a platform with no SW record, or in SW with no platform presence
 4. Enriches gaps into three buckets: email mismatch (SW record exists under different email), known staff (SW record of this type missing), unknown (no SF footprint — investigate before creating anything)
-5. Creates the Airtable ticket with an action items block and full audit report
+5. Runs `Allocation__c` checkover query and flags people where `Checkover__c = 'Check'`
+6. If any platform fails, prints all errors and prompts before writing to Airtable — abort (`n`) to fix and re-run; proceeding (`y`) shows `⚠️ ERROR` for failed systems
+7. Updates the recurring audit ticket's `**AUDIT ACTION ITEMS**` section — PRE-AUDIT and POST-AUDIT sections above the marker are preserved
 
 Review output before proceeding. Resolve or note any gaps.
 
@@ -38,7 +41,7 @@ Review output before proceeding. Resolve or note any gaps.
 
 ## Step 2 — Checkover field audit
 
-Query `Software__c` and `Allocation__c` for records where `Checkover__c != 'Good'` and `Status__c = 'Active'`.
+The audit script automatically surfaces both `Software__c` and `Allocation__c` checkover flags in the ticket (action items 3 and 5 respectively). No manual queries needed unless you want to investigate a specific flag in more detail.
 
 ### Software__c — Checkover formula logic
 
@@ -102,6 +105,22 @@ Add any manual findings from Steps 2–3 to the ticket Internal Notes created in
 
 ---
 
+## Removal date lookup
+
+For every "Active in SF, not found in external platform" gap (action item 2), the script attempts to surface a suggested `End_Date__c` to fill on the SW record. It uses a three-tier hierarchy:
+
+1. **Reliable platform date** — use directly:
+   - Google: exact date from GAM admin audit log (`suspend_user` / `delete_user` events)
+   - Slack: `updated` timestamp on deleted member, validated within ±7 days of `SFDC_Staff__c.Termination_Date__c`
+
+2. **Airtable offboarding ticket** — if no reliable platform date, the script queries Support Tix for Issue Type = On/Offboarding within ±15 days of the staff member's termination date, then parses Internal Notes for a dated line matching the platform. If a date is found, it is surfaced inline; if a ticket is found but has no date for this platform, a hyperlink to the ticket is shown for manual review.
+
+3. **Flag** — if nothing resolves: "No removal date found — flag for review."
+
+The script never writes these dates to Salesforce — they are suggestions only, displayed in the action items block for human follow-through.
+
+---
+
 ## Email normalization note
 
 Salesforce users may be set up with `.com` or `.net` email variants; SW records may use either. During cross-reference, normalize both sides to `.com` before comparing to avoid false-positive mismatches. Do not modify any records based on the normalization — it is in-memory only.
@@ -115,7 +134,7 @@ Salesforce users may be set up with `.com` or `.net` email variants; SW records 
 | S-Sign | Unlimited license — live count will exceed SW records | By design |
 | Salesforce system accounts | Integration/analytics users appear in the SF user list | Maintain an exclusion list of known system account emails in the script |
 | Dialpad office/dept lines | Appear in the number pool but are not billed as user licenses | Document in SW record notes; offset the expected count |
-| Google O3 | Small fixed list — cross-ref handled manually | Automate if the list grows |
+| Google O3 | ✓ Automated — separate GAM config for O3 workspace | — |
 
 ---
 
