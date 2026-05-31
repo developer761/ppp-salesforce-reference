@@ -2,7 +2,7 @@
 
 This repo is the **shared memory** for Precision Painting Plus Salesforce work, used by everyone building on top of PPP's Salesforce org (internal admin + the Command Center engagement). Any Claude Code / AI session that has this repo in its working tree auto-loads this file — so it's the single source of truth for PPP's schema, conventions, and process playbooks.
 
-**If you are an AI assistant:** read this index, then open the specific doc you need. Treat these as authoritative for PPP field/object names, business rules, and KPI definitions. For anything time-sensitive or production-critical, verify against the live org — this is a reference snapshot, not live data.
+**If you are an AI assistant:** read the full repo — this index and all docs. Work across PPP's tech stack regularly crosses areas; loading everything upfront ensures nothing is missed as a session evolves. Do not scope to a single doc or system based on how the task is framed. Treat repo docs as authoritative for everything. For live, time-sensitive data, verify against the source directly — this is a reference snapshot, not live data.
 
 ---
 
