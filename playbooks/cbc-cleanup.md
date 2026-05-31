@@ -261,7 +261,7 @@ For Meta leads where WC provides a campaign name, the script attempts to populat
 Territories that periodically have no ACD and always route to Lead Review:
 - NY Suffolk East
 - FL Tampa East
-- Check for new gaps before each run — new territories launching mid-month may be missing
+- A small number of newer territories (~5 or fewer) receive ACDs created month-by-month rather than in advance; these will surface as ACD gaps when the ACD hasn't been created yet for the current month. Check for these before each run and confirm with whoever manages ACDs if unexpected territories are missing.
 
 ---
 
