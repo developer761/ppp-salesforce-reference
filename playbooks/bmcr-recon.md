@@ -21,7 +21,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
    - Amount + Date + fuzzy Vendor
    - Vendor + Amount (1-day date guard)
    - Submission ID + Amount (last resort — unique amount only)
-5. Classifies each matched row through a 15-rule decision tree
+5. Classifies each matched row through a 16-rule decision tree
 6. Phase 3a: searches the receipts inbox for manual_research rows by invoice number
 7. Phase 3b: targets SOQL for unmatched BMCR rows; prior-month carry-forwards annotated NTA
 8. Invokes the PDF scorer for Dbl_Check rows
@@ -77,7 +77,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 - Any *reduction* in points or dollar amount
 - `BMCR_Error` status (routes to manual review)
 - Notes containing disregard tokens (verified, confirmed, handled, ron)
-- Rule 15 catch-all
+- Rule 16 catch-all
 
 ---
 
@@ -138,6 +138,27 @@ python3 bmcr_recon.py --revert YYYY-MM-DD --reason "reason for revert"
 Reads `inputs/sf_tx_before.csv` for that date and restores original field values via bulk update. `--reason` is required — no revert without a documented reason.
 
 Manual revert (if `--revert` is unavailable): retrieve `sf_tx_before.csv` from Drive `BMCR Recon/<date>/inputs/` and restore via Data Loader or bulk API directly.
+
+**Null-clearing revert** (when fields need to be blanked, not just overwritten): the `--revert` command and bulk CSV cannot null existing values — empty cells are treated as no-ops. Use the Salesforce composite REST API instead, with explicit `null` values in the PATCH body:
+
+```python
+import subprocess, json, requests
+org = json.loads(subprocess.run(["sf", "org", "display", "--target-org", "prod", "--json"],
+    capture_output=True, text=True).stdout)['result']
+headers = {"Authorization": f"Bearer {org['accessToken']}", "Content-Type": "application/json"}
+requests.post(f"{org['instanceUrl']}/services/data/v{org['apiVersion']}/composite",
+    headers=headers,
+    json={"allOrNone": False, "compositeRequest": [
+        {"method": "PATCH",
+         "url": f"/services/data/v{org['apiVersion']}/sobjects/Transaction__c/<SF_ID>",
+         "referenceId": "ref1",
+         "body": {"BMCR_Status__c": "Submitted",
+                  "BMCR_Confirmation_Number__c": None,
+                  "BMCR_DollarAmount__c": None,
+                  "BMCR_PointsEarned__c": None}},
+    ]})
+```
+Up to 25 records per composite request. HTTP 204 per record = success.
 
 ---
 
