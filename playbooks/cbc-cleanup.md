@@ -4,7 +4,11 @@ Bi-weekly process that pulls fresh data from Salesforce and WhatConverts, reconc
 
 ---
 
-## Configuration (update each run)
+## Configuration
+
+The script calculates the date window automatically at runtime using a rolling 30-day window (today minus 30 days → today). No manual date changes are needed before running.
+
+To override for a custom range, set these at the top of the script:
 
 ```python
 DATE_START  = 'YYYY-MM-DD'   # start of date range (inclusive)
@@ -87,10 +91,27 @@ WHERE Month_Start__c >= {fy_start} AND Month_Start__c <= {fy_end}
 SELECT Name FROM User WHERE UserRole.Name = 'Call Center' AND IsActive = true
 
 -- 5. Field users (by profile — unioned with hardcoded field creator names in config)
+--    Field users whose profile differs from the standard field profile must be added
+--    to the hardcoded config set; they won't be picked up by this query.
 SELECT Name FROM User WHERE Profile.Name = '*Standard.Field' AND IsActive = true
 
 -- 6. Lead_Gen_Account__c picklist values (via REST describe)
 GET /services/data/v60.0/sobjects/Lead/describe
+
+-- 7. Vendor relationship detection via downstream work order evidence
+--    At startup, the script queries won opportunities linked to leads created by a
+--    non-vendor-team login. For each candidate opp, it checks WorkOrderCrew__c
+--    (crew attendance) and Transaction__c (Payment Out) records via
+--    WorkOrder__r.Opportunity__c. Opps with matching evidence are flagged; their
+--    leads receive vendor-team treatment (WC suppressed, vendor LS/LM/LG/ACD applied)
+--    and are also routed to Quality Review for owner reassignment follow-up.
+SELECT WorkOrder__r.Opportunity__c FROM WorkOrderCrew__c
+WHERE CrewName__c LIKE '%[Vendor]%' AND WorkOrder__r.Opportunity__c IN (:candidate_opp_ids)
+
+SELECT WorkOrder__r.Opportunity__c FROM Transaction__c
+WHERE RecordType.Name = 'Payment Out'
+  AND Payee__r.Name LIKE '%[Vendor]%'
+  AND WorkOrder__r.Opportunity__c IN (:candidate_opp_ids)
 ```
 
 ---
@@ -128,6 +149,7 @@ WC match is suppressed entirely (treated as no-match) for:
 - Any lead whose SF LS is in the **protected sources** list: `Field-Generated`, `Customer Referral`, `Walk Up`, `cold call`, `Pro Referral`
 - Leads created by **Wallpaper Unlimited team creators** (configured by name in script) — their leads always get WU values regardless of WC
 - Leads created by **field users** (Profile `*Standard.Field` + hardcoded names) where SF LS is blank — field users with a blank source get Rule 3 applied, not a WC override
+- Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the creator login is not a designated vendor team account; WC is suppressed and vendor values are applied
 
 Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by phone first then email, within **±2 days** of SF `CreatedDate`.
 
@@ -166,8 +188,9 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 | 7 | Lead created by known marketing creator + SF LS = Strategic Outreach | SF LM→Organic, SF LG→Other Marketing |
 | 8 | CC-created or API-created (reached here with no prior rule matching) | → Lead Review (always, even if SF LM/LG are filled) |
 | 9 | SF LS blank + no creator rule matched | → Lead Review |
-| 10 | ACD gap (no matching ACD found in SF for territory + month + type) | → Lead Review |
-| 11 | **Catch-all (runs after all rules):** any lead or opp still missing LS, LM, LG, or ACD after processing | → Lead Review with list of missing fields |
+| 10 | ACD gap (no matching ACD found in SF for territory + month + type) | → Quality Review |
+| 11 | **Catch-all (runs after all rules):** any lead or opp still missing LS, LM, or LG after processing | → Lead Review with list of missing fields |
+| 11b | **Catch-all:** any lead or opp still missing ACD after processing | → Quality Review with list of missing ACD fields |
 
 ---
 
@@ -186,11 +209,12 @@ WC_SOURCE_CANONICAL = {
     # chatgpt.com passes through unchanged; LG=AI is set via fixed-override, not LS
     # Territory-named GMB: WC sends geographic names without 'GMB' in the string,
     # so the 'gmb' substring check misses them — hardcoded here:
-    'dallas collin': 'GMB', 'hudson essex': 'GMB', 'long island': 'GMB',
+    'dallas': 'GMB', 'dallas collin': 'GMB', 'dallas denton': 'GMB',
+    'hudson essex': 'GMB', 'long island': 'GMB',
     'los_angeles': 'GMB', 'manhattan_north': 'GMB', 'miami': 'GMB',
     'middlesex_monmouth': 'GMB', 'orlando': 'GMB', 'queens': 'GMB',
     'san_diego': 'GMB', 'suffolk southwest': 'GMB', 'union middlesex': 'GMB',
-    'bocaraton': 'GMB',
+    'bocaraton': 'GMB', 'garden-city': 'GMB',
 }
 ```
 
@@ -229,7 +253,7 @@ Some SF Lead Sources have hardcoded LM/LG values applied regardless of WC data:
 Key: `{month_num} {year} {ServiceTerritory} {ACD_type}`
 
 - ACD type from `System_Setting__mdt`: Lead Group → ACD type
-- If no ACD found for that territory + month + type → **flag for Lead Review** (ACD gap)
+- If no ACD found for that territory + month + type → **flag for Quality Review** (ACD gap)
 - No fallback to Out of Area — an ACD gap always routes to review
 
 ### Opp ACD (for converted leads)
@@ -272,3 +296,4 @@ Territories that periodically have no ACD and always route to Lead Review:
 - **Catch-all fires last** — after all rules run, any lead or opp still missing LS, LM, LG, or ACD is flagged with a list of the missing fields. This catches edge cases no specific rule covers (e.g. a lead with a known LS but blank LM/LG that fell through uncorrected).
 - **WU ACDs have no Service Territory** — they won't appear in by-state CBC breakdowns (by design). They appear in Full Company reports.
 - **`ACD_Checkover__c` on Opp is a formula** that produces the same value as `ACD_Checkover_Corp_Name__c` on the ACD record. The outside-territory lookup already handles this matching correctly, so the field isn't needed for assignment — but comparing `Opp.ACD_Checkover__c` to the assigned ACD's `ACD_Checkover_Corp_Name__c` can serve as a post-assignment sanity check.
+- **Opp upload batch conflicts on ACD** — a process (`Opportunity.AdCostDetailUpdate`) fires on ACD changes and SF limits updates to the same ACD record to 12 per batch. When many opps share the same ACD, some will fail with `DUPLICATE_VALUE`. Fix: extract the failed records from the SF bulk results file and retry them as a small standalone batch — the smaller batch stays within the limit.
