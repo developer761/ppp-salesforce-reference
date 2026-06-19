@@ -121,7 +121,7 @@ WHERE RecordType.Name = 'Payment Out'
 | File | Purpose |
 |------|---------|
 | `{DATE} cbc clean-up LEAD REVIEW.xlsx` | Leads flagged for manual review by Lead Review Coordinator — pink Lead IDs |
-| `{DATE} cbc clean-up QUALITY REVIEW.xlsx` | Leads where a WC source was accepted but no LG mapping exists and LG is blank — flags an unmapped source that needs an LG assignment |
+| `{DATE} cbc clean-up QUALITY REVIEW.xlsx` | Leads routed for admin review: ACD gaps (no matching ACD in SF for territory + month + type), missing ACD after all processing, WC source accepted but no LG mapping exists, and leads where downstream WO evidence confirms a vendor relationship requiring owner reassignment |
 | `{DATE} cbc clean-up DATALOAD.xlsx` | Full working file — pink=review, orange=ACD, yellow=changes, green=clean |
 | `{DATE} dataload-leads.csv` | Lead upload: LS, LM, LG, ACD, ST, Lead Gen Account |
 | `{DATE} dataload-opps.csv` | Opp upload: LS, LG, ACD |
