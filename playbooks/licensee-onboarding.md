@@ -231,7 +231,7 @@ Adding a future licensee = add their territory Name to both formulas' condition.
 Tested order (2026-06). Sequence matters because parts couple.
 
 1. **Metadata deploy** — CustomPermissions + CustomFields + PermissionSets (4 components per licensee).
-2. **LGS template** — Katie UI-clones in prod (`Let's Get Started No AM` → `Let's Get Started No AM (Licensee)`). Then API PATCH the HtmlValue (strip + add line).
+2. **LGS template** — admin UI-clones in prod (`Let's Get Started No AM` → `Let's Get Started No AM (Licensee)`). Then API PATCH the HtmlValue (strip + add line).
 3. **LGS flow** — surgically edit the prod flow (add 2 formulas + repoint 2 subflow inputs). Deploy. **Verify Active** (activate via FlowDefinition deploy if it landed Draft).
 4. **SDocs template edits** — REST PATCH the 9 edits (Invoice + Invoice Email body, plus the 7 templates with the header `Licenses:` line). Back up the original field values to disk first.
 5. **Territory data** — set `Company_Name__c`, `dbaName__c`, `PriceBook__c`, address on each licensee's ServiceTerritory.
