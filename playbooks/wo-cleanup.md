@@ -70,21 +70,23 @@ Detects and corrects mismatches between `Opportunity.StageName` and `WorkOrder.S
 ### Transaction detection
 Whether a WO "has transactions" is determined by querying related `Transaction__c` records (master-detail via `WorkOrder__c`), not by the aggregate currency fields (`TotalPaymentsIn__c` etc.) on the WO. Those aggregate fields can lag or differ.
 
-### Rule 1: Opp Lost + real WO not Canceled → move Opp to Closed Won
-**Logic:** A non-canceled real WO means actual work happened (or was in progress). The WO status reflects ground truth. If the WO isn't canceled, the job wasn't canceled — the Opp should be Closed Won, not Lost.
+### Rule 1: Opp Lost + real WO not Canceled → flag for manual review
+**Logic:** A non-canceled real WO means actual work happened (or was in progress). The WO status reflects ground truth. If the WO isn't canceled, the job wasn't canceled — the Opp stage should be Closed Won, not Lost, and CloseDate will need to be corrected.
 
-- **Move Opp to Closed Won** (3-step quote sequence required — see below)
-- **CloseDate needs adjustment** — the existing CloseDate will be wrong since the Opp was in Lost; set to a meaningful date (WO end date or last payment date)
-- Transactions on the WO reinforce this — the job actually happened
+- **Flag all matches for manual review** — do not auto-change stage
+- Reviewer sets `StageName = 'Closed Won'` and corrects `CloseDate` (3-step quote sequence required — see below)
+- `CloseDate` should be set to a meaningful date (WO end date or last payment date)
 
-### Rule 2: Opp Closed Won + all real WOs Canceled → move Opp to Opportunity Lost
-**Logic:** If all real WOs are canceled, no work was done. The Opp should reflect that.
+**Exclusions (Rule 1):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (see script config).
 
-- **Auto-move to Opportunity Lost** if no related `Transaction__c` records exist on any WO
-- **Flag** if transactions present — validate transaction dates vs current FY before auto-moving; older transactions (pre-FY) are generally safe to move
-- **Skip** if opp has any other active (non-Canceled) real WO — that WO means work is still happening → Closed Won is correct
+### Rule 2: Opp Closed Won + all real WOs Canceled → update Opp stage to Opportunity Lost
+**Logic:** If all real WOs are canceled, no work was done. The Opp stage should reflect that.
 
-**Exclusions (both rules):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` contains 'tomco'.
+- **Auto-update stage to Opportunity Lost** if no related `Transaction__c` records exist on any WO
+- **Flag** if `Transaction__c` records are present — validate record dates vs current FY before updating; pre-FY records are generally safe to proceed
+- **Skip** if opp has any other active (non-Canceled) real WO — work is still in progress → Closed Won is correct
+
+**Exclusions (Rule 2):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (see script config).
 
 ### Required sequence for any Opp stage change
 
@@ -113,7 +115,7 @@ This record-before-save flow blocks edits to WOs in "Closed" status. Bypass requ
 Changing `Opportunity.StageName` triggers territory validation. Some opps fail with:
 `FIELD_CUSTOM_VALIDATION_EXCEPTION: No Service Territory was found for ZIP code XXXXX`
 
-**Fix:** Add the zip to the out-of-area ST → move the opp → remove the zip. Hyphenated zips (`11801-4431`) may need the 5-digit form (`11801`) added — check whether the base form exists first.
+**Fix:** Add the zip to the out-of-area ST → update the opp stage → remove the zip. Hyphenated zips (`11801-4431`) may need the 5-digit form (`11801`) added — check whether the base form exists first.
 
 ### `FY_Assigned__c` — no auto-update on CloseDate change
 `Opportunity.FY_Assigned__c` (text, e.g. "2026") represents the PPP fiscal year the opp is assigned to, using the FY **starting** year. No flow updates it when CloseDate changes — run a separate correction pass if CloseDates are bulk-corrected.
