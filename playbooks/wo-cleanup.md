@@ -65,18 +65,24 @@ Before applying any adjustment, check: would `cur - BalanceOwed` fall outside `[
 
 Detects and corrects mismatches between `Opportunity.StageName` and `WorkOrder.Status`.
 
-### Rule 1: Opp Lost + WO not Canceled
-**Expected:** when Opp is "Opportunity Lost", all WOs should be Canceled.
+"WO" in both rules means **real (non-estimate-appointment) WOs only** — estimate appointment WOs are excluded from all logic here.
 
-- **Auto-cancel** if WO has no transactions (`TotalPaymentsIn__c`, `TotalPayoutsForLabor__c`, `TotalNonBillablePurchases__c`, `TotalBillablePurchases__c` all zero/null)
-- **Flag** if transactions present — requires manual review before canceling
+### Transaction detection
+Whether a WO "has transactions" is determined by querying related `Transaction__c` records (master-detail via `WorkOrder__c`), not by the aggregate currency fields (`TotalPaymentsIn__c` etc.) on the WO. Those aggregate fields can lag or differ.
 
-### Rule 2: Opp Closed Won + all WOs Canceled
-**Expected:** a Closed Won opp should have at least one active (non-Canceled) non-estimate WO.
+### Rule 1: Opp Lost + real WO not Canceled → move Opp to Closed Won
+**Logic:** A non-canceled real WO means actual work happened (or was in progress). The WO status reflects ground truth. If the WO isn't canceled, the job wasn't canceled — the Opp should be Closed Won, not Lost.
 
-- **Auto-move to Opportunity Lost** if no transactions on any WO
-- **Flag** if transactions present — validate transaction dates before moving
-- **Skip** if opp has another active non-estimate WO (real job still active → Closed Won is correct)
+- **Move Opp to Closed Won** (3-step quote sequence required — see below)
+- **CloseDate needs adjustment** — the existing CloseDate will be wrong since the Opp was in Lost; set to a meaningful date (WO end date or last payment date)
+- Transactions on the WO reinforce this — the job actually happened
+
+### Rule 2: Opp Closed Won + all real WOs Canceled → move Opp to Opportunity Lost
+**Logic:** If all real WOs are canceled, no work was done. The Opp should reflect that.
+
+- **Auto-move to Opportunity Lost** if no related `Transaction__c` records exist on any WO
+- **Flag** if transactions present — validate transaction dates vs current FY before auto-moving; older transactions (pre-FY) are generally safe to move
+- **Skip** if opp has any other active (non-Canceled) real WO — that WO means work is still happening → Closed Won is correct
 
 **Exclusions (both rules):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` contains 'tomco'.
 
