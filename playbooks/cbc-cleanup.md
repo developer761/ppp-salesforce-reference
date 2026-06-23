@@ -148,8 +148,9 @@ sf data update bulk --sobject Lead        --file "{DATE} dataload-leads-lg.csv" 
 WC match is suppressed entirely (treated as no-match) for:
 - Any lead whose SF LS is in the **protected sources** list: `Field-Generated`, `Customer Referral`, `Walk Up`, `cold call`, `Pro Referral`
 - Leads created by **Vendor - WU team creators** (configured by name in script) — their leads always get WU values regardless of WC
+- Leads created by a **second affiliate vendor team** (configured by name in script, separate from WU) — their leads always get their affiliate LS values regardless of WC
 - Leads created by **field users** (Profile `*Standard.Field` + hardcoded names) where SF LS is blank — field users with a blank source get Rule 3 applied, not a WC override
-- Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the creator login is not a designated vendor team account; WC is suppressed and vendor values are applied
+- Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the creator login is not a designated vendor team account; WC is suppressed and vendor values are applied. This detection runs for each configured affiliate vendor (currently two: WU and a second affiliate).
 
 Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by phone first then email, within **±2 days** of SF `CreatedDate`.
 
@@ -178,6 +179,7 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 |---|-----------|--------|
 | 1 | SF LS = Previous Customer | SF LM→Repeat if blank, SF LG→Repeat if blank. No review flag. |
 | 2 | Vendor - WU creator, OR SF LS = `Vendor - WU` (any creator) | SF LS=Vendor - WU, SF LM=Referral, SF LG=Other Marketing |
+| 2b | Second affiliate vendor creator, OR downstream WO evidence confirms that affiliate's relationship, OR SF LS = that affiliate's LS value (any creator) | SF LS=[affiliate LS], SF LM=Referral, SF LG=Other Marketing. **No ACD assigned** — this affiliate is intentionally excluded from cost/corp reporting. |
 | 3 | SF LS = Customer Referral + CC-created + no Referring Account | → Lead Review |
 | 3b | SF LS = Customer Referral + Referring Account linked (field-gen referral) | Pass through; update SF LM→Referral if blank, SF LG→Referral if blank |
 | 4 | SF LS = Field-Generated, OR field creator + SF LS blank | SF LS=Field-Generated if blank; SF LM→Self-Generated if blank, SF LG→Self-Generated if blank |
@@ -271,6 +273,9 @@ Applies when the opp owner (or lead creator for unconverted leads) is a CD team 
 
 ### Vendor - WU ACD
 Vendor - WU ACDs are identified by a stable tag in `Notes__c` (set directly on ACD records; stable across corp account renames). Key: `{month} {year} {ACD_type}` — no ST component.
+
+### Second Affiliate Vendor — No ACD
+Unlike WU, a second affiliate vendor is **intentionally excluded from ACD assignment and cost/corp reporting**. No ACD lookup is performed; no ACD gap flag is raised. Lead and opp ACD fields are left blank for all records flagged to this affiliate, regardless of creator or detection path.
 
 ---
 
