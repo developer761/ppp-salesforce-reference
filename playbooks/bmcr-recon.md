@@ -23,7 +23,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
    - Submission ID + Amount (last resort — unique amount only)
 5. Classifies each matched row through a 16-rule decision tree
 6. Phase 3a: searches the receipts inbox for manual_research rows by invoice number
-7. Phase 3b: targets SOQL for unmatched BMCR rows; prior-month carry-forwards annotated NTA
+7. Phase 3b: processes unmatched BMCR rows — Stein Paint / BM National rows use SOSL document lookup (identifies both the BM National tx and the matching Stein tx); all other vendors use SOQL (full vendor name, exact amount, date ±1 day); prior-month carry-forwards annotated NTA
 8. Invokes the PDF scorer for Dbl_Check rows
 9. Generates 4-tab review packet xlsx + uploads to Drive `/BMCR Recon/`
 10. Bulk-updates SF for auto-update rows (sf_tx_before.csv snapshot taken first)
@@ -116,6 +116,29 @@ Configured in `config/decision_rules.yaml`.
 | `python3 bmcr_recon.py --dry-run` | Skip SF writeback + Slack posts |
 | `python3 bmcr_recon.py --force` | Bypass already-ran-this-month guard |
 | `python3 bmcr_recon.py --revert YYYY-MM-DD --reason "…"` | Restore SF for that run (reason required) |
+| `python3 bmcr_recon.py --write-supplemental path.csv` | Apply a supplemental write CSV with state-change safety check |
+
+---
+
+## Supplemental writes
+
+Used when a second batch of rows needs to be written after the main run has already executed — for example, correcting rows that were missed or need a different value after the live run completed.
+
+```bash
+python3 bmcr_recon.py --write-supplemental path/to/payload.csv
+```
+
+**How it works:**
+1. Reads `state/last_run.json` automatically to find the reference run — no date argument needed
+2. Loads the pre-run SF snapshot (`sf_tx_before.csv`) from that run
+3. Queries current SF state for every Id in the payload
+4. Skips any row whose SF values have already changed since the pre-run snapshot (already written by something else)
+5. Applies only the safe (unchanged) rows via bulk update
+6. Writes `applied/supplemental_payload.csv` + `applied/supplemental_result.json` to the reference run's folder
+
+**Safety guarantee:** Prevents the pattern where a second write overwrites rows already correctly written by the main run. Any row touched by the main live run will be detected as "already modified" and skipped.
+
+**Payload format:** CSV with `Id` column plus SF field API names as headers (same format as the main writeback payload). Never use a dry-run output file as a supplemental payload after a live run has executed for the same rows.
 
 ---
 
@@ -192,12 +215,18 @@ Script auto-derives the prior month from the current filename and downloads both
 
 ## Known edge cases
 
-### BM National Account transactions
-Stein Paint invoices submitted through Benjamin Moore National Account appear in BMCR with `Dollar Amount Total = $0` (BM submitted, not Stein direct). The corresponding SF transaction is a `BM National Account` record with a BM invoice number (`5500xxxxxx`).
+### BM National Account and Stein Paint transactions (Phase 3b)
+All Stein Paint and BM National rows in the BMCR that don't match via the main join are handled by Phase 3b using a SOSL document lookup. The vendor is identified upfront from the BMCR distributor field ("BENJAMIN MOORE", "BM National Account", or "stein").
 
-- These flow through the recon normally
-- Do **not** get sent to the PDF scorer (BM National uses wholesale ZWB SKUs not in the BMC retail sheet)
-- Look up via SOSL on the BM invoice number
+Phase 3b searches SF by invoice number and discriminates results by document title:
+- **`Inv_5500` in title** → BM National invoice PDF → follow ContentDocumentLink → BM National `Transaction__c`
+- **`Invoices` title** → Stein combined invoice file (same file linked to multiple transactions) → match correct Stein tx by `ReferenceId__c`
+
+Both transactions are identified in one pass and reported in the Update Notes annotation.
+
+Additional notes:
+- BM National rows do **not** get sent to the PDF scorer (wholesale ZWB SKUs not in BMC retail sheet)
+- Stein $0/$0 rows (BM submitted, not Stein direct) are a common sub-case of the above — handled by the same path
 
 ### Ponderosa Paint Center
 `VendorBMRetailer__c = false` on Ponderosa's SF vendor record → excluded from SOQL pull entirely. BMCR rows for Ponderosa will always appear unmatched. If the SF transaction is otherwise correct and Approved, no action needed.
