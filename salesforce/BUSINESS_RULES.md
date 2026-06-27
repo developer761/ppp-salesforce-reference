@@ -59,6 +59,20 @@ Similarly, **do not use the `SDocs_User` permission set** to count SDocs license
 - Completed job = `Status IN ('Closed', 'Complete Paid in Full', 'Complete Balance Owed')`. (~99% are `Closed`.)
 - `Opportunity.WO_Complete__c` may have a similar lag — sanity-check before relying on it.
 
+## ⚠️ WorkOrder save behaviors (block writes, fire customer emails)
+
+Two active flows materially affect when a WorkOrder can be safely modified from external tools (Command Center, integrations, scripts, data loads).
+
+**`WorkOrder_DisallowEditWhenClosed`** — RecordBeforeSave on Create+Update; entry filter `ISPICKVAL(Status, 'Closed')`. **Blocks ALL field updates** when WO Status is `Closed`, even single-field writes from external tools. WO must be in an open status for any write to land.
+
+**`WorkOrder_SendLetsGetStartedEmail`** — RecordAfterSave on Insert. Sends a customer-facing email to the Opp's Primary Contact when **all** of the following are true:
+- Opportunity `StageName = 'Closed Won'`
+- `WorkType.Name` is NOT `Estimate Appointment`, `Phone Estimate Appointment`, or `Partner Estimate Appointment`
+- The Wallpapers Unlimited permission is NOT held
+- The user creating the WO is not in the alias exclusion list
+
+Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) WorkType WILL fire this email. Relevant for any test data setup, sandbox-to-prod data load, or external WO creation. Mitigation when seeding test data: use a test Account whose Primary Contact email is a controlled inbox.
+
 ## Gross margin (lives on WorkOrder, not Opportunity)
 
 - **Canonical GM% = `WorkOrder.Gross_Margin_Percent__c`** = `GrossProfit__c / Quoted_Subtotal_with_Change_Order__c`.
