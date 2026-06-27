@@ -68,7 +68,7 @@ Two active flows materially affect when a WorkOrder can be safely modified from 
 **`WorkOrder_SendLetsGetStartedEmail`** — RecordAfterSave on Insert. Sends a customer-facing email to the Opp's Primary Contact when **all** of the following are true:
 - Opportunity `StageName = 'Closed Won'`
 - `WorkType.Name` is NOT `Estimate Appointment`, `Phone Estimate Appointment`, or `Partner Estimate Appointment`
-- The Wallpapers Unlimited permission is NOT held
+- A subsidiary-scoped exclusion permission set is NOT held
 - The user creating the WO is not in the alias exclusion list
 
 Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) WorkType WILL fire this email. Relevant for any test data setup, sandbox-to-prod data load, or external WO creation. Mitigation when seeding test data: use a test Account whose Primary Contact email is a controlled inbox.
