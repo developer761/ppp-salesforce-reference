@@ -333,7 +333,7 @@
 | Contractor_Cost__c | Contractor Cost | Currency | No | — |
 | Contractor_Paid__c | Contractor Paid | Currency | No | — |
 | Corporate_Name__c | Corporate Name | Text(200) | No | — |
-| Created_Hour__c | Created Hour | Formula (Number) | No | Formula: `MOD( FLOOR( (CreatedDate - DATETIMEVALUE("1980-01-01 00:00:00")) * 24 ) - 5, 24 )` |
+| Created_Hour__c | Created Hour | Formula (Number) | No | Formula: `MOD( FLOOR( (CreatedDate - DATETIMEVALUE("1980-01-01 00:00:00")) * 24 ) - 5, 24 )`. ⚠️ Hardcoded `-5` EST offset — reads **1 hour behind actual ET during EDT** (~Mar–Nov). Add `+1` correction when comparing against ET thresholds during DST windows. |
 | Created_Month__c | Created Month | Text(1300) | No | Formula: `Text(Month( DATEVALUE(CreatedDate)))` |
 | Created_Weekday__c | Created Weekday | Text(1300) | No | Formula: `CASE(WEEKDAY(DATEVALUE(CreatedDate)), 1, "7 Sunday", 2, "1 Monday", 3, "2 Tuesday", 4, "3 Wednesd...` |
 | CreatedDate__c | Created Date | Date/Time | No | — |
@@ -440,7 +440,7 @@
 | County__c | County | Text(40) | No | — |
 | cps_Inquiry_Details_Notes__c | Inquiry Details/Notes | Text Area(32768) | No | — |
 | Created_Date_Lead_Gen__c | Created Date (Lead Gen) | Formula (Date/Time) | No | Formula: `if( CreatedDate > Lead_Gen_Timestamp__c ,Lead_Gen_Timestamp__c,CreatedDate)` |
-| Created_Hour__c | Created Hour | Formula (Number) | No | Formula: `MOD( FLOOR( (CreatedDate - DATETIMEVALUE("1980-01-01 00:00:00")) * 24 ) - 5, 24 )` |
+| Created_Hour__c | Created Hour | Formula (Number) | No | Formula: `MOD( FLOOR( (CreatedDate - DATETIMEVALUE("1980-01-01 00:00:00")) * 24 ) - 5, 24 )`. ⚠️ Hardcoded `-5` EST offset — reads **1 hour behind actual ET during EDT** (~Mar–Nov). Add `+1` correction when comparing against ET thresholds during DST windows. |
 | Created_Month__c | Created Month | Formula (Number) | No | Formula: `MONTH(DATEVALUE( CreatedDate ))` |
 | Created_Weekday__c | Created Weekday | Text(1300) | No | Formula: `CASE(WEEKDAY(DATEVALUE(CreatedDate)), 1, "7 Sunday", 2, "1 Monday", 3, "2 Tuesday", 4, "3 Wednesd...` |
 | CreatedDate__c | Created Date | Date/Time | No | — |

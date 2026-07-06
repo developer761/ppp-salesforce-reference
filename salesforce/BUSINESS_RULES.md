@@ -84,6 +84,14 @@ Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) 
 - **`Opportunity.LeadGroup__c`** *(self-gen bucket, updated 2026-05-21)*: `LeadGroup__c` ∈ {`'Self-Generated'`, `'Trade Show'`, `'Repeat'`, `'Referral'`} → **self-gen**; **every other value (and null) → marketing** (so self-gen + marketing always reconciles to the total).
 - The previously-flagged split is now in effect: `Repeat`, `Referral`, and `Trade Show` are counted as **self-gen** (relationship/earned leads), no longer marketing.
 
+## Call Center hours
+
+- **Mon–Fri:** 9am – 8pm ET
+- **Sat/Sun:** 9am – 5:30pm ET
+- Timezone: America/New_York (DST-aware). All CC staff work in ET.
+- The org's `BusinessHours` "Default" record (9am–10pm weekday, 9am–7:30pm weekend) is **not** the CC schedule — don't rely on it as a proxy.
+- For after-hours analysis: `Lead.CreatedDate` is UTC. Filtering against these ET boundaries requires DST-aware conversion. `Lead.Created_Hour__c` alone is not sufficient — see its ⚠️ note in `DATA_DICTIONARY.md`.
+
 ## Transactions (money flow)
 
 - **`Transaction__c`** record types: `Payment_In`, `Payment_Out`, `Purchase`.
