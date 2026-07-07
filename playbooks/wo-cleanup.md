@@ -123,3 +123,32 @@ Changing `Opportunity.StageName` triggers territory validation. Some opps fail w
 Formula: `month >= 2 → FY = CloseDate.year; month == 1 → FY = CloseDate.year - 1`
 
 PPP FY starts Feb 1 (FY26 = Feb 1, 2026 – Jan 31, 2027).
+
+---
+
+## Section 4 — Move WOs to Closed
+
+Real (non-estimate) WOs where the job is fully complete should move to `Status = 'Closed'`. Because the `WorkOrder_DisallowEditWhenClosed` flow blocks edits once a WO is Closed, this step is **two-step and never auto-closes**: export candidates → human validates → close only the approved Ids.
+
+### Auto-close criteria (all must be true)
+- `Status` NOT IN (Coordination, Scheduling, On Hold, Pending, Canceled, Closed)
+- `StartDate` and `EndDate` both set
+- `LaborDaysActual__c` != 0
+- `Contractor__c` != null (crew assigned)
+- `RequestReview__c` != null
+- `BalanceOwed__c` = 0
+- `Total_Undeposited_Payments__c` = 0 — the **amount** field; do not use the count field `UndepositedTransactions__c`
+- `LastPaymentIn__c` != null AND older than 7 days
+- `TotalPayoutsForLabor__c` != 0
+- **Excludes:** opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (same exclusions as Section 3)
+
+### Flag for manual review (meets all completion signals except one — do not close)
+- `LastPaymentIn__c` is null → "no last payment date" (should not normally occur)
+- `TotalPayoutsForLabor__c` = 0 AND `EndDate` older than 60 days → labor would have requested payment by then
+
+### Silent skip (not closed, not flagged — reconsider next run)
+- `TotalPayoutsForLabor__c` = 0 AND `EndDate` within 60 days → payout may simply be unrecorded
+- `LastPaymentIn__c` within the last 7 days → too recent
+
+### Batching
+Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `allOrNone=false` — same governor-limit reasoning as Section 1.
