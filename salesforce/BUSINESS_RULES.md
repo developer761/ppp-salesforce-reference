@@ -112,6 +112,19 @@ Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) 
 
 - Sales-tax rate is **`ServiceTerritory.TaxRate__c`** (geographic). There is no per-licensee/brand rate and no separate tax object.
 
+## Corporate-name attribution (territory → billing entity)
+
+Which corporate entity an Opportunity / WorkOrder belongs to is derived from its **Service Territory**, by rule — **not** from a single field.
+
+- **⚠️ Do not use `ServiceTerritory.Company_Name__c` for corp attribution.** It holds the insurance / legal-entity name and can differ from the billing corp (some territories show a distinct legal entity but bill under the corporate parent). It's the right value for the invoice "legal entity" line, the wrong one for attribution.
+- **Corporate-owned territories:**
+  - **NY → `Blue Chip Painting and Contracting Inc. 2026`**
+  - **Non-NY → `PPP of Long Island` (`PPP of Long Island INC 2026`)**
+- **Fiscal-year suffix:** the trailing year (`2026`) marks the current-FY corp setup; the **legal entity** is the same name without the year. When matching, treat `… Inc.` and `… Inc. 2026` as the **same entity** (a year-only difference is not a real mismatch). Likewise fold known legal-vs-brand and suffix aliases (a brand name and its legal entity are one billable corp).
+- **Licensee territories are the exception** — they attribute to the **licensee's own corporate entity**, not the two above. The specific territory→licensee-corp mapping lives in the private admin records (per `playbooks/licensee-onboarding.md`, licensee names are kept out of this repo).
+- **`WorkOrder.Corporate_Name__c` is the authority** when it disagrees with `Opportunity.Corporate_Name__c` (the WO reflects who actually does the work). In the ad-cost model the same entity appears as `AdCostDetail__r.CorpAccount__r.Alternate_Corp_Name__c`.
+- **Sentinel values are expected, not errors:** some Opportunities carry `Corporate_Name__c = 'Needs validation'` (or `'Ask Alex'`) as a placeholder until a WorkOrder sets the real corp — common for cross-territory / phone-estimator Opps. Treat these as "not yet set", not as a corp.
+
 ## Brand
 
 - Colors: Orange `#EE662E`, Blue `#2BAAE1`, Green `#8DC442`, Navy `#172B4D` (primary text). Fonts: Roboto (body), Roboto Condensed (display/numbers).
