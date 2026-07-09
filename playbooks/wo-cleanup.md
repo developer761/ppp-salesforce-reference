@@ -165,9 +165,12 @@ Some licensee / commercial operators are not yet held to the attendance-logging 
 - `BalanceOwed__c = 0`
 - `Total_Undeposited_Payments__c = 0`
 - `StartDate` and `EndDate` both set
+- `RequestReview__c != null` (estimator-finalized signal — see below)
 - WorkType does not contain "Appointment"
 
-**Status is not gated on a specific done-status.** For these corps the label is unreliable (jobs sit on "Work In Progress" long after they settle), so doneness is established by dates + `$0` balance + crew payout instead. `Canceled`/`Closed` stay excluded — never close those.
+**Status is not gated on a specific done-status.** For these corps the label is unreliable (jobs sit on "Work In Progress" long after they settle), so completeness is established by the estimator-finalized signal + dates + `$0` balance + crew payout instead. `Canceled`/`Closed` stay excluded — never close those.
+
+**`RequestReview__c` requirement.** This field is set by the estimator (it drives whether account management solicits a customer review); a non-null value means the estimator has finalized the WO. The scheduled status-automation batch (`WorkOrderStatusAutomation`) won't advance a WO to a Complete status while it's null, so this pass must not either — never close a WO the estimator hasn't finalized.
 
 ### Then classify (mirrors Section 4)
 - `TotalPayoutsForLabor__c` > 0 → **close-eligible** (crew was paid = work happened)
