@@ -152,3 +152,27 @@ Real (non-estimate) WOs where the job is fully complete should move to `Status =
 
 ### Batching
 Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `allOrNone=false` — same governor-limit reasoning as Section 1.
+
+---
+
+## Section 4b — Attendance-exempt corps (recurring)
+
+Some licensee / commercial operators are not yet held to the attendance-logging policy and leave `LaborDaysActual__c` blank, so their completed WOs are structurally skipped by the Section 4 filter (which requires `LaborDaysActual__c != 0`). They accumulate as done-but-open WOs and need a separate close pass each cycle. Same two-step, never-auto-close discipline and REST-composite batching (10/batch, `allOrNone=false`) as Section 4.
+
+### Base filter (WOs owned by a configured attendance-exempt owner list)
+- Opp `StageName = 'Closed Won'`
+- `Status` NOT IN (Coordination, Scheduling, On Hold, Pending, Canceled, Closed)
+- `BalanceOwed__c = 0`
+- `Total_Undeposited_Payments__c = 0`
+- `StartDate` and `EndDate` both set
+- WorkType does not contain "Appointment"
+
+**Status is not gated on a specific done-status.** For these corps the label is unreliable (jobs sit on "Work In Progress" long after they settle), so doneness is established by dates + `$0` balance + crew payout instead. `Canceled`/`Closed` stay excluded — never close those.
+
+### Then classify (mirrors Section 4)
+- `TotalPayoutsForLabor__c` > 0 → **close-eligible** (crew was paid = work happened)
+- `TotalPayoutsForLabor__c` = 0 AND `EndDate` older than 60 days → **flag** for review, never auto-close (payout would have been recorded by now — either unrecorded or the job wasn't actually done)
+- `TotalPayoutsForLabor__c` = 0 AND `EndDate` within 60 days → silent skip (too recent — payout may simply be unrecorded)
+
+### Preferred end state (retires 4b)
+Fold the exemption into the Section 4 candidate logic: drop `LaborDaysActual__c != 0` from the hard filter and enforce it in classification instead — require it **unless** the owner is attendance-exempt, in which case use `TotalPayoutsForLabor__c` as the work-happened signal per the rules above. Validate with a read-only pass before adopting so nothing over-closes.
