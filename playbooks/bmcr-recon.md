@@ -5,6 +5,12 @@ Monthly reconciliation of PPP's Benjamin Moore Contractor Rewards (BMCR) 365-rep
 **Status:** Live (first production run 2026-06)  
 **Process doc (source of truth for business rules):** Internal Google Drive — "BMCR Process" doc
 
+> **Updated 2026-07-10 — reconciliation + write flow rebuilt.** Each transaction now routes to
+> *reconcile* (increases only) or *review* (with a flag); nothing is silently dropped. Fuzzy-vendor
+> matches are gated at **≥90% string similarity**. The monthly run **never auto-writes to Salesforce** —
+> it produces a review packet with an Approve column, and writes happen only via an explicit apply step.
+> See "Reconciliation decision tree" and "Audit gate" below.
+
 ---
 
 ## What it does
@@ -14,19 +20,19 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 1. **Step 0** — Auto-fetches the latest `BMC Products_*.xlsx` from the designated Drive folder
 2. Fetches the current month's BMCR 365 Report CSV from Drive folder "BMCR YTD Reports" (Gmail fallback)
 3. Pulls all BMCR-eligible `Transaction__c` records from SF production via SOQL
-4. Matches BMCR rows to SF transactions via six paths:
+4. Matches BMCR rows to SF transactions via six priority paths (each row labeled with its tier):
    - Confirmation number
-   - Reference ID (with W↔VV mis-OCR variant)
+   - Reference ID / invoice number (with W↔VV mis-OCR variant)
    - Exact Amount + Date + Vendor
-   - Amount + Date + fuzzy Vendor
+   - Amount + Date + fuzzy Vendor (**gated at ≥90% string similarity**; score shown in review)
    - Vendor + Amount (1-day date guard)
    - Submission ID + Amount (last resort — unique amount only)
-5. Classifies each matched row through a 16-rule decision tree
+5. Routes each row to *reconcile* or *review* (see "Reconciliation decision tree"), then classifies the reconcile rows through the decision-rule tree
 6. Phase 3a: searches the receipts inbox for manual_research rows by invoice number
 7. Phase 3b: processes unmatched BMCR rows — Stein Paint / BM National rows use SOSL document lookup (identifies both the BM National tx and the matching Stein tx); all other vendors use SOQL (full vendor name, exact amount, date ±1 day); prior-month carry-forwards annotated NTA
 8. Invokes the PDF scorer for Dbl_Check rows
-9. Generates 4-tab review packet xlsx + uploads to Drive `/BMCR Recon/`
-10. Bulk-updates SF for auto-update rows (sf_tx_before.csv snapshot taken first)
+9. Generates the review packet xlsx (incl. the audit-gate tabs) + uploads to Drive `/BMCR Recon/` (sf_tx_before.csv snapshot taken first)
+10. **Does not write to SF** — the run stages proposed writes only; a human reviews the packet and runs the apply step to write approved rows (see "Audit gate")
 11. Posts run summary via Slack
 
 ---
@@ -66,18 +72,47 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 
 ---
 
-## Auto-update principle
+## Reconciliation decision tree (2026-07-10)
 
-**Auto-write to SF (no human review):**
-- Any rule that *increases* PPP credit (more $ awarded, more points)
+Every SF transaction routes to **reconcile** or **review** — nothing is silently dropped. Date basis
+is the **SF transaction date**; age thresholds: old = ≥ 350 days, very recent = ≤ 14 days.
+
+```
+Match (conf# → ref/invoice → amt/vendor tiers):
+├─ BMCR row NOT rejected                     → reconcile (usual checks; increases only)
+└─ BMCR row = Rejected:
+     ├─ SF = Submitted                       → reconcile (record the rejection)
+     └─ SF ≠ Submitted:
+          ├─ age ≥ 350d                       → review "Potential drop - SF [status] + ≥350d …"
+          └─ age < 350d                       → review "recent rejection match …"
+No match (#N/A):
+├─ SF No_Paint / No_Receipt                  → review "Drop - no receipt/no paint"
+├─ age ≥ 350d                                → review "Potential drop - no match, ≥350d"
+├─ age ≤ 14d                                 → review "Potential drop - will show on next statement"
+└─ else (15–349d)                            → review "Review - not found with conf or ref"
+```
+
+**Why:** a rejection can only downgrade, and the clawback scan (14 mo) proved an approved conf# is
+never genuinely re-rejected — so a fallback-matched rejection against an approved SF record is always a
+duplicate. Surfacing (not auto-downgrading) preserves the approval while keeping a genuine reversal visible.
+
+**Top-priority suppressor — disregard tokens.** Before any row surfaces to review, SF BMCR Notes are
+checked for a disregard token (`per ron`, `verified`, `confirmed`, `handled`; fuzzy-matched). A row
+already carrying one is human-verified → `no_change`, never surfaced, regardless of what the statement says.
+
+**Confirmation # writes are add-only-when-missing** — the process only writes a conf# to SF when SF's is
+blank; it **never overwrites** an existing conf# (a fallback match can carry a duplicate's conf#, and a
+human-entered/verified conf# must stand).
+
+## Reconcile "usual checks" (increases only)
+
+For rows that reconcile, the decision-rule tree only ever *increases* PPP credit or self-flags:
+- Rules that *increase* $ awarded or points
 - Self-flagging status transitions: `Approved`, `Dbl_Check`, `No Points Awarded`
-- Confirmation # propagation when BMCR knows it and SF doesn't
+- Confirmation # propagation only when SF's is blank
 
-**Review only (human sheet, no SF write):**
-- Any *reduction* in points or dollar amount
-- `BMCR_Error` status (routes to manual review)
-- Notes containing disregard tokens (verified, confirmed, handled, ron)
-- Rule 16 catch-all
+A *reduction* in points/$ is never auto-applied; `BMCR_Error` routes to manual review; disregard-token
+rows stay `no_change`.
 
 ---
 
@@ -113,7 +148,8 @@ Configured in `config/decision_rules.yaml`.
 | `python3 bmcr_recon.py --manual` | Force run regardless of date window |
 | `python3 bmcr_recon.py --csv path.csv` | Skip Gmail fetch, use local BMCR CSV |
 | `python3 bmcr_recon.py --sf-csv path.csv` | Skip SOQL pull, use local SF export CSV |
-| `python3 bmcr_recon.py --dry-run` | Skip SF writeback + Slack posts |
+| `python3 bmcr_recon.py --dry-run` | Produce the packet without Slack posts (the run never writes to SF regardless) |
+| `python3 bmcr_recon.py --apply reviewed.xlsx` | **Audit gate:** write ONLY the Approve==yes rows from a reviewed packet's "Proposed Writes" tab (state-change safety). Add `--dry-run` to build the payload without writing |
 | `python3 bmcr_recon.py --force` | Bypass already-ran-this-month guard |
 | `python3 bmcr_recon.py --revert YYYY-MM-DD --reason "…"` | Restore SF for that run (reason required) |
 | `python3 bmcr_recon.py --write-supplemental path.csv` | Apply a supplemental write CSV with state-change safety check |
@@ -153,10 +189,31 @@ Per-run output in `BMCR Recon/<YYYY-MM-DD>/`:
 - `logs/run.log` — full run log
 
 Review packet tabs:
-1. **Auto-Update** — rows written to SF; for audit trail
-2. **Designated Review** — rows needing designated reviewer action
-3. **Needs Manual Research** — #N/A rows with receipts search results
+1. **Proposed Writes** — reconcile rows staged for SF, with an **Approve** column (default `yes`), sortable by change-category. `--apply` writes only Approve==yes rows.
+2. **Review – Actionable** — surfaced rows needing a human decision (potential drops, recent rejection matches, not-found)
+3. **Review – Low Priority** — high-volume, low-value surfacing (old orphans, no-paint/no-receipt, "will show next statement")
 4. **All Transactions** — full view with all classifications
+5. Plus legacy tabs (Carey Review, Uploaded Changes, Needs Manual Research) for continuity
+
+Each audit-gate tab also carries **Match Tier**, **Fuzzy %**, and **Stmt Row** provenance columns.
+
+---
+
+## Audit gate
+
+The monthly run **never writes to Salesforce**. It stages proposed writes in the packet and stops. A
+human reviews the **Proposed Writes** tab (default `Approve = yes`; strike/clear a cell to veto, batch by
+change-category), then applies:
+
+```bash
+python3 bmcr_recon.py --apply "path/to/reviewed.xlsx"          # writes Approve==yes rows
+python3 bmcr_recon.py --apply "path/to/reviewed.xlsx" --dry-run  # build payload, write nothing
+```
+
+Apply reads the reviewed values as-is (no re-run / re-classify), builds the payload from the `*NEW`
+columns, and writes via the same state-change safety check as `--write-supplemental` — any row whose live
+SF values changed since the run snapshot is skipped. This is what prevents a stale write from clobbering a
+value a human already corrected.
 
 ---
 
