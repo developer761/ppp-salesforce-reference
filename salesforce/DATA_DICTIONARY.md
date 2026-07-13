@@ -1,6 +1,6 @@
 # Precision Painting Plus — Salesforce Data Dictionary
 **Org:** Production
-**Generated:** 2026-05-11
+**Generated:** 2026-07-10
 **Scope:** Custom fields on core standard objects + all PPP-owned custom objects + flows, apex, validation rules, record types
 
 ---
@@ -45,13 +45,13 @@
 | Opportunity | Standard | 103 |
 | Lead | Standard | 89 |
 | Case | Standard | 17 |
-| Quote | Standard | 17 |
+| Quote | Standard | 18 |
 | QuoteLineItem | Standard | 23 |
-| WorkOrder | Standard | 96 |
+| WorkOrder | Standard | 97 |
 | WorkOrderLineItem | Standard | 41 |
 | Task | Standard | 8 |
 | Event | Standard | 8 |
-| User | Standard | 11 |
+| User | Standard | 15 |
 | Order | Standard | 0 |
 | Contract | Standard | 0 |
 | Campaign | Standard | 0 |
@@ -105,7 +105,7 @@
 | Zip_Analysis__c | Custom | 10 |
 | Zip_Code__c | Custom | 14 |
 
-**Totals:** 20 core standard objects, 44 PPP-owned custom objects, 186 package-namespaced custom objects (not detailed below).
+**Totals:** 20 core standard objects, 44 PPP-owned custom objects, 192 package-namespaced custom objects (not detailed below).
 
 ---
 
@@ -571,6 +571,7 @@
 | Discount_Amount__c | Discount Amount | Currency | No | — |
 | DiscountAmountCalculated__c | Discount Amount Calculated | Formula (Currency) | No | Formula: `(NULLVALUE(DiscountPercentageLabor__c, 0) * NULLVALUE(Subtotal__c, 0))` |
 | DiscountPercentageLabor__c | Discount Percentage (Labor) | Percent | No | A percentage discount to apply to Labor costs only. |
+| Display_Area_Cost__c | Display Area Cost | Checkbox | Yes | — |
 | Display_Discount__c | Display Discount | Checkbox | Yes | — |
 | Display_Material_Cost__c | Display Material Cost | Checkbox | Yes | — |
 | GrandTotal__c | Grand Total | Formula (Currency) | No | Formula: `Subtotal__c - Discount_Amount__c + Tax - DiscountAmountCalculated__c + IF( Materials_Included__c ...` |
@@ -704,6 +705,7 @@
 | Subtotal__c | Subtotal | Currency | No | The total of all Work Order Line Items (UnitPrice * Quantity), if the Status Category is not 'Cannot Complete', 'Canceled', or 'Pending Approval - ADD'. |
 | SubtotalPlusMaterials__c | Subtotal plus Materials | Formula (Currency) | No | Formula: `Subtotal__c + IF( Materials_Included__c =TRUE, CostMaterials__c ,0)` |
 | Tax_Rate__c | Tax Rate | Formula (Percent) | No | Formula: `ServiceTerritory.TaxRate__c` |
+| Total_Payment_Terms__c | Total Payment Terms | Currency | No | Sum of Amount on all Payment Terms attached to this Work Order. Maintained automatically by Rollup Helper. |
 | Total_Undeposited_Payments__c | Total Undeposited Payments | Currency | No | — |
 | TotalBillablePurchases__c | Total Billable Purchases | Currency | No | — |
 | TotalChangeOrder__c | Total Change Order | Currency | No | — |
@@ -884,7 +886,11 @@
 | Full_Name__c | Full Name | Text(1300) | No | Formula: `FirstName & " " & LastName` |
 | Gross_Margin_Goal_Percent__c | Gross Margin Goal % | Percent | No | — |
 | LAST_NAME__c | LAST_NAME | Text(1300) | No | Formula: `UPPER( LastName )` |
+| Licensee_DHES__c | DHES Licensee User | Checkbox | Yes | Check for users operating as the DHES Precision Painting licensee. Hides PPP payment info on their generated documents. |
+| Licensee_Krebill__c | Krebill Licensee User | Checkbox | Yes | Check for users operating as the Krebill, LLC (Precision Painting Plus of Denver) licensee. Hides PPP payment info on their generated documents. |
 | payout_approver__c | Payout Approver | Lookup(User) | No | — |
+| Quarterly_Draw__c | Quarterly Draw | Currency | No | Quarterly draw paid to this rep. Updated by finance. Defaults to $0 for new users. Enter the draw amount for a full quarter (not monthly). |
+| Self_Gen_Sales_Goal_Percent__c | Self-Gen Sales Goal % | Percent | No | Target % of closed-won $ sales that should come from Self-Generated leads. Leave blank for reps not measured on this metric. |
 | Staff_ID__c | Staff ID | Text(18) | No | — |
 | UserId_18__c | UserId(18) | Text(1300) | No | Formula: `CASESAFEID(Id)` |
 
@@ -2244,7 +2250,7 @@ _Label: Zip Code_
 
 ## Automations — Flows
 
-> 292 unmanaged flows: **252 active**, 40 inactive/draft/no active version. Grouped by `[PREFIX]` parsed from MasterLabel/DeveloperName.
+> 312 unmanaged flows: **267 active**, 45 inactive/draft/no active version. Grouped by `[PREFIX]` parsed from MasterLabel/DeveloperName.
 
 ### ACCOUNT — 13 flow(s)
 
@@ -2270,11 +2276,23 @@ _Label: Zip Code_
 |----------------------|-------|--------------|--------|---------|-------------|
 | AdCostDetail_SetTitle | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 
+### ADD — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| Add_Asset_to_Maintenance_Plan | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+
 ### ADDATTENDANCE — 1 flow(s)
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | AddAttendance | Attendance.Add | Flow | ✅ Active | 12 | — |
+
+### CASCADE — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| Cascade_Delete_Form_Version | — | Flow | ✅ Active | 8 | — |
 
 ### CASE — 9 flow(s)
 
@@ -2303,7 +2321,7 @@ _Label: Zip Code_
 | ChangeOrder_AllowOnlyAuthorizedUsers | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 | ChangeOrder_Approval_UpdateLineItems | — | AutoLaunchedFlow | ✅ Active | 6 | — |
 | ChangeOrder_Create | — | Flow | ✅ Active | 16 | — |
-| ChangeOrder_RouteToApproval | — | AutoLaunchedFlow | ✅ Active | 11 | — |
+| ChangeOrder_RouteToApproval | — | AutoLaunchedFlow | ✅ Active | 13 | — |
 | ChangeOrder_Update | — | Flow | ✅ Active | 5 | — |
 
 ### CHANGEORDERLINEITEM — 1 flow(s)
@@ -2340,6 +2358,12 @@ _Label: Zip Code_
 | CPS_Set_Acc_Owner_to_correct_Sales_Rep | — | — | — | — | — |
 | CPS_Set_Appointment_Owners | — | — | — | — | — |
 | CPS_User_Presence_Flow | — | AutoLaunchedFlow | ✅ Active | 79 | — |
+
+### CREATE — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| Create_Form_Definition_Version | — | Flow | ✅ Active | 7 | — |
 
 ### DAILY — 1 flow(s)
 
@@ -2378,11 +2402,23 @@ _Label: Zip Code_
 |----------------------|-------|--------------|--------|---------|-------------|
 | Expense_UpdateContractorPaidOnOpp | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 
+### FIELD — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| Field_Service_Mobile_Status_Transition | — | — | — | — | — |
+
 ### FIND — 1 flow(s)
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | Find_Lead_Associated_with_Messaging_Session | — | IndividualObjectLinkingFlow | ✅ Active | 8 | — |
+
+### FIX — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| Fix_Schedule_Overlaps | — | — | — | — | — |
 
 ### FLOWLIB — 42 flow(s)
 
@@ -2398,7 +2434,7 @@ _Label: Zip Code_
 | FlowLib_ContentDocumentLinks_Clone | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_CreateOrUpdateAssignedResource | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 | FlowLib_CreateQuotaPoints | — | AutoLaunchedFlow | ✅ Active | 7 | — |
-| FlowLib_EditPaymentTerms | — | Flow | ✅ Active | 17 | — |
+| FlowLib_EditPaymentTerms | — | Flow | ✅ Active | 18 | — |
 | FlowLib_GetActiveEmailTemplateByName | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | FlowLib_GetRecordTypeId | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_GetServiceTerritoryByZipCode | — | AutoLaunchedFlow | ✅ Active | 2 | — |
@@ -2410,7 +2446,7 @@ _Label: Zip Code_
 | FlowLib_IsZipCodeConfigured_Autolaunched | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_LogEmail | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_ManualServiceAppointment | — | Flow | ✅ Active | 11 | — |
-| FlowLib_Opportunity_AddTeamMembersFromServiceTerritory | — | AutoLaunchedFlow | ✅ Active | 16 | — |
+| FlowLib_Opportunity_AddTeamMembersFromServiceTerritory | — | AutoLaunchedFlow | ✅ Active | 18 | — |
 | FlowLib_Opportunity_AddTeamMembersFromServiceTerritory_Bulk | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 | FlowLib_OpportunityClone | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_PaymentTerms_Clone | — | AutoLaunchedFlow | ✅ Active | 1 | — |
@@ -2420,7 +2456,7 @@ _Label: Zip Code_
 | FlowLib_QuoteLineItems_Clone | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | FlowLib_ReassignAccount | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | FlowLib_ReassignEvents | — | AutoLaunchedFlow | ✅ Active | 4 | — |
-| FlowLib_ReassignOpportunities | — | AutoLaunchedFlow | ✅ Active | 6 | — |
+| FlowLib_ReassignOpportunities | — | AutoLaunchedFlow | ✅ Active | 9 | — |
 | FlowLib_ReassignServiceAppointments | — | AutoLaunchedFlow | ✅ Active | 5 | — |
 | FlowLib_ReassignServiceResources | — | AutoLaunchedFlow | ✅ Active | 4 | — |
 | FlowLib_ReassignWorkOrders | — | AutoLaunchedFlow | ✅ Active | 3 | — |
@@ -2430,6 +2466,24 @@ _Label: Zip Code_
 | FlowLib_SetServiceTerritoryMemberActive | — | AutoLaunchedFlow | ✅ Active | 25 | — |
 | FlowLib_Testing | — | — | — | — | — |
 | FlowLib_WorkOrderCrew_BuildEventSubject | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+
+### FSK — 13 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| FSK_Actual_Times_Capturing | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Cancelation_Canned_Notification | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Canned_Notification_Dispatched | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Exclude_Resource_On_Rejection | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Populate_Custom_Work_Order_Lookup | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Reflect_Actual_Times_on_Gantt | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Resource_Deactivation | — | — | — | — | — |
+| FSK_Service_Appointment | — | Workflow | ✅ Active | 1 | — |
+| FSK_Set_Assign_Resource_On_Service_Appointment | — | Workflow | ✅ Active | 1 | — |
+| FSK_Set_Assign_Service_Resource_On_Service_Appointment | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Set_Gantt_Label_Concatenation | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Update_Work_Order_Child_Records | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| FSK_Work_Order_Process | — | Workflow | ✅ Active | 1 | — |
 
 ### FSSK — 2 flow(s)
 
@@ -2443,11 +2497,11 @@ _Label: Zip Code_
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | TEST_Wait_Flow | [LEAD] Auto Routing CA Waiting Time- Part 1 | AutoLaunchedFlow | ✅ Active | 15 | Auto launched Wait Flow for CA Leads |
-| LEAD_Auto_Assigment | [LEAD] Auto Routing Record Trigger - Main Trigger | AutoLaunchedFlow | ✅ Active | 39 | Triggered on Lead Creation |
 | LEAD_Outbound_Auto_Assignment_Flow | [LEAD] Outbound Manual Assignment Flow | Flow | ✅ Active | 13 | v2.2.1 - Screen Component and Cadence Selection, Cadence Id pasted to another Subflow |
 | Lead_ConvertCustom_beta | Lead.ConvertCustom_beta | — | — | — | — |
 | Lead_AdCostDetailUpdate | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | Lead_AgentFieldAutoUpdate | — | AutoLaunchedFlow | ✅ Active | 9 | — |
+| LEAD_Auto_Assigment | — | AutoLaunchedFlow | ✅ Active | 40 | — |
 | Lead_Company_Name | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | Lead_ConvertCustom | — | Flow | ✅ Active | 17 | — |
 | Lead_ConvertLead | — | — | — | — | — |
@@ -2481,7 +2535,7 @@ _Label: Zip Code_
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | Opportunity_SetServiceTerritoryAndOwner | Opportunity:SetServiceTerritoryAndOwner | AutoLaunchedFlow | ✅ Active | 50 | Set values based on the Service Territory, via Zip Code. Set on After Save because of how the Estimation Address is s... |
-| Opportunity_AdCostDetailUpdate | — | AutoLaunchedFlow | ✅ Active | 1 | — |
+| Opportunity_AdCostDetailUpdate | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 | Opportunity_AddTeamMembersFromServiceTerritory_Create | — | AutoLaunchedFlow | ✅ Active | 5 | — |
 | Opportunity_AddTeamMembersFromServiceTerritory_update | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 | Opportunity_CancelServiceAppointments | — | Flow | ✅ Active | 1 | — |
@@ -2558,7 +2612,7 @@ _Label: Zip Code_
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
-| QuoteCreateNew | — | Flow | ✅ Active | 28 | — |
+| QuoteCreateNew | — | Flow | ✅ Active | 31 | — |
 
 ### QUOTELINEITEM — 5 flow(s)
 
@@ -2590,11 +2644,12 @@ _Label: Zip Code_
 |----------------------|-------|--------------|--------|---------|-------------|
 | SDocRelationship_QuoteEmailed | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 
-### SEND — 1 flow(s)
+### SEND — 2 flow(s)
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | Send_Case_Update_Notification_to_Case_Team | — | AutoLaunchedFlow | ✅ Active | 2 | — |
+| Send_Email_For_Automated_Bundling_Failures | — | — | — | — | — |
 
 ### SERVICEAPPOINTMENT — 16 flow(s)
 
@@ -2603,7 +2658,7 @@ _Label: Zip Code_
 | ServiceAppointment_24hrReminder | — | AutoLaunchedFlow | ✅ Active | 10 | — |
 | ServiceAppointment_AfterCancelOrCannotComplete | — | AutoLaunchedFlow | ✅ Active | 6 | — |
 | ServiceAppointment_BeforeSave_SetContactFields | — | AutoLaunchedFlow | ✅ Active | 3 | — |
-| ServiceAppointment_Booked_Email_Notification | — | AutoLaunchedFlow | ✅ Active | 20 | — |
+| ServiceAppointment_Booked_Email_Notification | — | AutoLaunchedFlow | ✅ Active | 21 | — |
 | ServiceAppointment_CalendarEvent | — | AutoLaunchedFlow | ✅ Active | 20 | — |
 | ServiceAppointment_CancelledSetOpportunityNeedsReschedule | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | ServiceAppointment_OwnerChange_ReassignEvents | — | AutoLaunchedFlow | ✅ Active | 1 | — |
@@ -2638,7 +2693,7 @@ _Label: Zip Code_
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
-| SSignEnvelope_UpdateQuoteOnSent | — | AutoLaunchedFlow | ✅ Active | 2 | — |
+| SSignEnvelope_UpdateQuoteOnSent | — | AutoLaunchedFlow | ✅ Active | 3 | — |
 
 ### STAFF — 6 flow(s)
 
@@ -2671,7 +2726,7 @@ _Label: Zip Code_
 | Transaction_DisallowUpdateIfXeroEntered | — | AutoLaunchedFlow | ✅ Active | 9 | — |
 | Transaction_EnforceValidVendor | — | AutoLaunchedFlow | ✅ Active | 4 | — |
 | Transaction_LDAmountPopulateforPayee | — | AutoLaunchedFlow | ✅ Active | 11 | — |
-| Transaction_NewRecord | — | Flow | ✅ Active | 29 | — |
+| Transaction_NewRecord | — | Flow | ✅ Active | 31 | — |
 | Transaction_PaymentOut_AutoSubmitForApproval | — | AutoLaunchedFlow | ✅ Active | 4 | — |
 | Transaction_SetOpportunity | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | Transaction_SetOwnerAndOpportunity | — | — | — | — | — |
@@ -2716,12 +2771,17 @@ _Label: Zip Code_
 |----------------------|-------|--------------|--------|---------|-------------|
 | Winter_Promo_Form_Designation | — | AutoLaunchedFlow | ✅ Active | 15 | — |
 
+### WO — 1 flow(s)
+
+| Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
+|----------------------|-------|--------------|--------|---------|-------------|
+| WO_Set_Opportunity_End_Date | — | AutoLaunchedFlow | ✅ Active | 2 | — |
+
 ### WORKORDER — 26 flow(s)
 
 | Flow (DeveloperName) | Label | Process Type | Status | Version | Description |
 |----------------------|-------|--------------|--------|---------|-------------|
 | WorkOrder_AutomateStatus | WorkOrder.AutomateStatus | — | — | — | DEPRECATED in favor of WorkOrderStatusAutomation apex class |
-| WorkOrder_SetOpportunityFinancialFields | WorkOrder.SetOpportunityFinancialFields | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_AddUpTransactions | — | AutoLaunchedFlow | ✅ Active | 8 | — |
 | WorkOrder_AssignCrew | — | Flow | ✅ Active | 2 | — |
 | WorkOrder_CalculateTax | — | AutoLaunchedFlow | ✅ Active | 18 | — |
@@ -2735,12 +2795,13 @@ _Label: Zip Code_
 | WorkOrder_OwnerChange_ReassignChildren | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_QuestionnaireScreenFlow | — | Flow | ✅ Active | 8 | — |
 | WorkOrder_QuotaPointsValueUpdate | — | AutoLaunchedFlow | ✅ Active | 1 | — |
-| WorkOrder_SendLetsGetStartedEmail | — | AutoLaunchedFlow | ✅ Active | 23 | — |
+| WorkOrder_SendLetsGetStartedEmail | — | AutoLaunchedFlow | ✅ Active | 24 | — |
 | WorkOrder_SetAccountLastWorkOrderCompletedDate | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | WorkOrder_SetContactId | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | WorkOrder_SetCoordinationCompleteDate | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_SetDefaults | — | AutoLaunchedFlow | ✅ Active | 6 | — |
-| WorkOrder_SetOpportunityTotalAmount | — | AutoLaunchedFlow | ✅ Active | 11 | — |
+| WorkOrder_SetOpportunityFinancialFields | — | AutoLaunchedFlow | ✅ Active | 2 | — |
+| WorkOrder_SetOpportunityTotalAmount | — | — | — | — | Deactivated 2026-05-15. Filter formula was broken: it tried to detect changes via {!$Record.X}!={!$Record__Prior.X} o... |
 | WorkOrder_SetOwnerToOpportunityOwner | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_SetQuotaPointsAttainedWhenClosed | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | WorkOrder_SetStatus | — | AutoLaunchedFlow | ✅ Active | 1 | — |
@@ -2787,7 +2848,7 @@ _Label: Zip Code_
 
 ## Apex Triggers
 
-> 21 unmanaged Apex Triggers.
+> 23 unmanaged Apex Triggers.
 
 | Trigger | Object | Status | API Ver | Events |
 |---------|--------|--------|---------|--------|
@@ -2802,6 +2863,8 @@ _Label: Zip Code_
 | PaymentTermTrigger | Payment_Term__c | Active | 59 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
 | QuoteLineItemTrigger | QuoteLineItem | Active | 59 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
 | QuoteTrigger | Quote | Active | 58 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
+| RHX_Payment_Term | Payment_Term__c | Active | 63 | before delete, after insert, after update, after delete, after undelete |
+| RHX_WorkOrder | WorkOrder | Active | 63 | before delete, after insert, after update, after delete, after undelete |
 | SDocTrigger | SDOC__SDoc__c | Active | 59 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
 | ServiceAppointmentTrigger | ServiceAppointment | Active | 58 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
 | SSignEnvelopeTrigger | SSign__SSEnvelope__c | Active | 58 | before insert, before update, before delete, after insert, after update, after delete, after undelete |
@@ -2817,10 +2880,10 @@ _Label: Zip Code_
 
 ## Apex Classes
 
-> 209 unmanaged Apex Classes (counts shown below; see source for implementation).
+> 211 unmanaged Apex Classes (counts shown below; see source for implementation).
 
 - **Non-test classes:** 127
-- **Test classes:** 82
+- **Test classes:** 84
 
 <details><summary>Full list (alphabetical)</summary>
 
@@ -2924,10 +2987,10 @@ _Label: Zip Code_
 | LeadIncomingHARequest | Active | 58 | 1249 |
 | LeadIncomingMetaEndpoint | Active | 66 | 10135 |
 | LeadIncomingMetaEndpointTest | Active | 56 | 9428 |
-| LeadIncomingProcessor | Active | 56 | 13337 |
+| LeadIncomingProcessor | Active | 56 | 13463 |
 | LeadIncomingProcessorTest | Active | 56 | 7215 |
 | LeadIncomingWCEndpoint | Active | 56 | 626 |
-| LeadIncomingWCEndpointTest | Active | 56 | 810 |
+| LeadIncomingWCEndpointTest | Active | 56 | 2404 |
 | LeadIncomingWCRequest | Active | 56 | 2794 |
 | LeadReassignmentBatch | Active | 60 | 928 |
 | LeadReassignmentBatchTest | Active | 60 | 1891 |
@@ -2985,10 +3048,12 @@ _Label: Zip Code_
 | QueueServiceTest | Active | 58 | 8788 |
 | QuickLightningLookupController | Active | 55 | 5184 |
 | QuickLightningLookupControllerTest | Active | 55 | 1782 |
-| QuoteService | Active | 59 | 468 |
+| QuoteService | Active | 59 | 452 |
 | QuoteServiceTest | Active | 60 | 2421 |
 | RecordTypeService | Active | 58 | 1375 |
 | RemoveRecordInCollection | Active | 48 | 1165 |
+| RHX_TEST_Payment_Term | Active | 63 | 418 |
+| RHX_TEST_WorkOrder | Active | 63 | 403 |
 | ScheduleUpdatingLeadOwner | Active | 58 | 254 |
 | ScheduleUpdatingLeadOwner_Test | Active | 58 | 1885 |
 | SDocTriggerHandler | Active | 59 | 242 |
@@ -3017,7 +3082,7 @@ _Label: Zip Code_
 | StringServiceTest | Active | 62 | 485 |
 | SystemSettingSelector | Active | 58 | 2893 |
 | SystemSettingSelectorTest | Active | 58 | 4927 |
-| TestFactory | Active | 57 | 21573 |
+| TestFactory | Active | 57 | 21954 |
 | TriggerHandler | Active | 58 | 1549 |
 | TriggerHandlerTest | Active | 58 | 2205 |
 | UpsertRecords | Active | 48 | 2798 |
@@ -3042,7 +3107,7 @@ _Label: Zip Code_
 
 ## Validation Rules
 
-> 79 validation rules across the org. Active rules block save when their formula evaluates true.
+> 80 validation rules across the org. Active rules block save when their formula evaluates true.
 
 | Object | Rule | Active | Error Message |
 |--------|------|--------|---------------|
@@ -3075,7 +3140,8 @@ _Label: Zip Code_
 | Lead | Require_Project_Size_When_Qualified | ✅ | The Project Size field must be completed when moving the Lead to Qualified. |
 | Lead | Unqualified_Status_Requires_Reason | ✅ | If Status is Unqualified then Unqualified Reason must be entered. |
 | Opportunity | Close_Date_Uneditable_after_Closed_Won_L | ✅ | Contact PPP Support for assistance. |
-| Opportunity | OnlyLostAfterClosedWon | ✅ | Please contact Support for this error. Rule Name: OnlyLostAfterClosedWon |
+| Opportunity | OnlyLostAfterClosedWon | ✅ | Please contact Support for this error.
+ Rule Name: OnlyLostAfterClosedWon |
 | Quote | Material_Cost_Estimate_Required | ⛔ | When materials are included or will be displayed to the customer, the materials cost field is required. |
 | ResourceAbsence | Absence_Color_HEX_Format | ✅ | Gantt color must be in hexadecimal format: (for example: #ffffff) |
 | ResourceAbsence | startShouldPrecedeEnd | ✅ | The Start Time must be earlier than the End Time. |
@@ -3114,6 +3180,7 @@ _Label: Zip Code_
 | Transaction__c | Deposited_Requires_Reference_ID | ✅ | You must enter a Reference ID if Deposited is True. |
 | Transaction__c | No_Transactions_on_Estimates | ✅ | Transaction and Attendance records are not allowed to be added to Estimate Work Orders. |
 | Transaction__c | only_allow_finance_team_in_final_status | ⛔ | Contact the finance team to make changes. |
+| Transaction__c | Retail_Account_Required | ✅ | A retail vendor is required. |
 | User | FSK_User_Creation_Feature_Inactive | ✅ | FSSK Package: SFS Resource Type should only be used when the Field Service users automation feature in the Field Service Starter Kit Pack... |
 | User | FSK_User_Type_Is_Not_Community | ✅ | FSSK Package: This SFS Resource Type value should only be used for community user records |
 | User | FSK_User_Type_Is_Not_Standard | ✅ | FSSK Package: This SFS Resource Type value should only be used for users with a Salesforce user license |
