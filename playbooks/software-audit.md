@@ -168,3 +168,24 @@ Both are valid. Do not flag a past-month difference as an error without first ch
 ### Systematic future-month patterns to expect
 
 When SW licenses have End Dates that fall mid-year (e.g., SDocs/SSign expiring in August, Google expiring in December), the expected SW cost will drop below the recorded allocation in later months. This is normal — the allocation assumes renewal. Only investigate if the license is genuinely not being renewed.
+
+---
+
+## Two-pass reconciliation
+
+Keeping `Software__c` records in sync with the platforms is a two-directional check:
+
+1. **SF → platform** — for each *Active* SW record, confirm the person actually holds that license live on the platform. Active-in-SF-but-absent-from-the-platform = stale → set `End_Date__c` + `Status__c`, or confirm it's an accepted exception. Verify against the real platform roster, not only the cross-referenced email match — matches can throw false negatives when a user's platform login domain differs from the email on the SW record.
+2. **platform → SF** — every live platform seat needs an Active SW record; a seat with no record = create one.
+
+The audit's cross-reference produces both directions ("active in SF, not found in platform" and "active in platform, not in SF").
+
+**Accepted noise:** an unlimited-license product (e.g. S-Sign) will show SW records "active in SF, not on platform" because the platform-side check is a permission-set/email match that doesn't line up 1:1. Don't chase these.
+
+---
+
+## Creating Software__c records — RecordType is required
+
+`Type__c` and `License_Type__c` are **restricted picklists gated by the record's RecordType**. Inserting a record without the matching `RecordTypeId` fails with `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` — through the CLI *and* Apex. **Updates** to existing records don't need it (they inherit the RecordType). Set the RecordType that matches the platform Type (Slack, E-Document, Salesforce, Google, Dialpad, or Other) on every insert.
+
+**Non-billed external users** (external parties using PPP software without being invoiced): record their seats against the shared **Non-Employee** staff record at standard cost, so the consumption is tracked as an overage against that bucket rather than lost.
