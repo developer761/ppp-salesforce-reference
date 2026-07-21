@@ -24,8 +24,8 @@ A job produces **three independent results**, each rolled up by `color + finish 
 | **Walls** | wall color | the room's wall color |
 | **Trim** | the **wall paint line in a semi-gloss finish** | often white; sometimes BM Advance for a more enamel-like finish. PPP does *not* use a dedicated trim enamel by default. **Door faces (when in scope) use this trim paint/finish.** |
 
-Brands: **Benjamin Moore** primarily — Ultra Spec (contractor line) or Regal; trim sometimes
-BM Advance. **Sherwin Williams** more for commercial work and in FL / TX / CA / CO. Coverage
+Brands: **BM** primarily — Ultra Spec (contractor line) or Regal; trim sometimes
+BM Advance. **SW** more for commercial work and in FL / TX / CA / CO. Coverage
 rate should be a **configurable constant per product/finish** so these can be tuned without
 changing the formulas.
 
