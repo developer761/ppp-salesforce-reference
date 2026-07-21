@@ -73,6 +73,15 @@ Two active flows materially affect when a WorkOrder can be safely modified from 
 
 Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) WorkType WILL fire this email. Relevant for any test data setup, sandbox-to-prod data load, or external WO creation. Mitigation when seeding test data: use a test Account whose Primary Contact email is a controlled inbox.
 
+## Opportunity financial fields are sourced from the WorkOrder (not a rollup)
+
+`WorkOrder.SetOpportunityFinancialFields` (RecordAfterSave, Create+Update) copies the triggering WO's values up to its parent Opportunity when the Opp is `Closed Won` and the WO Status ≠ `Canceled`:
+- Opp `NetValue__c` ← WO `NetValue__c`
+- Opp `OriginalQuotedSubtotal__c` ← WO `Original_Quoted_Subtotal__c`
+- Opp `QuotedSubtotalWithChangeOrder__c` and `TotalAmount__c` ← WO `Quoted_Subtotal_with_Change_Order__c`
+
+**It is last-writer-wins, not a sum** — the most recent qualifying WO save overwrites the Opp fields. **As of v3 (2026-07-21), estimate-appointment WOs (`Estimate Appointment`, `Phone Estimate Appointment`, `Partner Estimate Appointment`) are excluded** from writing these fields. Before v3, a $0 estimate-appointment WO saving after the real WO would zero out the Opp's financials — so on an opp with a real WO worth money, `TotalAmount__c = 0` is a corruption signature. Re-saving the real (non-appointment) WO re-fires the flow and repopulates the Opp.
+
 ## Gross margin (lives on WorkOrder, not Opportunity)
 
 - **Canonical GM% = `WorkOrder.Gross_Margin_Percent__c`** = `GrossProfit__c / Quoted_Subtotal_with_Change_Order__c`.

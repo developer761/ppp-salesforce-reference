@@ -410,7 +410,7 @@
 | Service_Territory__c | Service Territory | Lookup(ServiceTerritory) | No | — |
 | Start_Date__c | Start Date | Date | No | — |
 | SystemUpdating__c | SystemUpdating | Checkbox | Yes | — |
-| TotalAmount__c | Total Amount | Currency | No | Custom field to calculate the total amount of the related Work Order. Calculated by Flow: WorkOrder.SetOpportunityTotalAmount |
+| TotalAmount__c | Total Amount | Currency | No | Total amount of the related Work Order (`Quoted_Subtotal_with_Change_Order__c`). Written by Flow `WorkOrder.SetOpportunityFinancialFields` (v3+); the older `WorkOrder.SetOpportunityTotalAmount` flow was deactivated 2026-05-15. Estimate-appointment WOs are excluded as of v3. |
 | TotalContractAmount__c | Total Contract Amount | Currency | No | — |
 | WO_Complete__c | WO Complete | Checkbox | Yes | — |
 | Work_Type1__c | Work Type | Lookup(WorkType) | No | — |
@@ -2800,7 +2800,7 @@ _Label: Zip Code_
 | WorkOrder_SetContactId | — | AutoLaunchedFlow | ✅ Active | 2 | — |
 | WorkOrder_SetCoordinationCompleteDate | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_SetDefaults | — | AutoLaunchedFlow | ✅ Active | 6 | — |
-| WorkOrder_SetOpportunityFinancialFields | — | AutoLaunchedFlow | ✅ Active | 2 | — |
+| WorkOrder_SetOpportunityFinancialFields | — | AutoLaunchedFlow | ✅ Active | 3 | Writes Opp NetValue/OriginalQuotedSubtotal/QuotedSubtotalWithChangeOrder/TotalAmount from the triggering WO. v3 (2026-07-21) added an entry filter excluding appointment WorkTypes. |
 | WorkOrder_SetOpportunityTotalAmount | — | — | — | — | Deactivated 2026-05-15. Filter formula was broken: it tried to detect changes via {!$Record.X}!={!$Record__Prior.X} o... |
 | WorkOrder_SetOwnerToOpportunityOwner | — | AutoLaunchedFlow | ✅ Active | 1 | — |
 | WorkOrder_SetQuotaPointsAttainedWhenClosed | — | AutoLaunchedFlow | ✅ Active | 2 | — |
