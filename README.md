@@ -6,7 +6,7 @@ Shared reference for Precision Painting Plus Salesforce work — schema, busines
 
 ## 🔒 This repo is public — curated content only
 
-No compensation data, no PII (names/emails/IDs tied to performance), no customer/account data, no secrets, no unrelated projects. Schema, conventions, and *logic* only. Full rules in [`CLAUDE.md`](./CLAUDE.md). The sensitive/detailed versions of this knowledge stay in private admin notes.
+No compensation data, no PII (names/emails/IDs tied to performance), no external-party/account data (customers, vendors, suppliers, manufacturers, partners), no secrets, no unrelated projects. Schema, conventions, and *logic* only. Full rules in [`CLAUDE.md`](./CLAUDE.md). The sensitive/detailed versions of this knowledge stay in private admin notes.
 
 ## Layout
 

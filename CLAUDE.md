@@ -13,7 +13,7 @@ This repository is publicly visible on the internet. Everything committed here c
 **NEVER commit any of the following:**
 - **Compensation data** — salaries, draws, commission amounts, individual quota dollar figures, GM targets per named person.
 - **Personally identifying info** — employee/customer names tied to performance, internal email addresses, phone numbers, Salesforce User IDs, record IDs.
-- **Customer / account data** — customer names, addresses, deal values, contact info, anything from real records.
+- **External-party / Account data** — names, addresses, deal values, contact info, or record IDs of any external party: customers, **vendors, suppliers, manufacturers**, partners, subsidiaries (in SF these are all Accounts). Abstract to a role descriptor or non-identifying initials when a reference is needed.
 - **Secrets** — API keys, tokens, OAuth client secrets, connection strings, `.env` contents.
 - **Unrelated work** — anything not part of PPP Salesforce (e.g. personal projects).
 
