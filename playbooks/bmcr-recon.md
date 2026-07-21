@@ -1,6 +1,6 @@
 # Playbook — BMCR Monthly Reconciliation
 
-Monthly reconciliation of PPP's Benjamin Moore Contractor Rewards (BMCR) 365-report against Salesforce transactions. Automates matching, classification, SF updates, and review packet generation.
+Monthly reconciliation of PPP's BM Contractor Rewards (BMCR) 365-report against Salesforce transactions. Automates matching, classification, SF updates, and review packet generation.
 
 **Status:** Live (first production run 2026-06)  
 **Process doc (source of truth for business rules):** Internal Google Drive — "BMCR Process" doc
@@ -17,7 +17,7 @@ Monthly reconciliation of PPP's Benjamin Moore Contractor Rewards (BMCR) 365-rep
 
 On the 5th of each month (±4 days), a launchd job fires the reconciliation script. The script:
 
-1. **Step 0** — Auto-fetches the latest `BMC Products_*.xlsx` from the designated Drive folder
+1. **Step 0** — Auto-fetches the latest `BM Products_*.xlsx` from the designated Drive folder
 2. Fetches the current month's BMCR 365 Report CSV from Drive folder "BMCR YTD Reports" (Gmail fallback)
 3. Pulls all BMCR-eligible `Transaction__c` records from SF production via SOQL
 4. Matches BMCR rows to SF transactions via six priority paths (each row labeled with its tier):
@@ -29,7 +29,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
    - Submission ID + Amount (last resort — unique amount only)
 5. Routes each row to *reconcile* or *review* (see "Reconciliation decision tree"), then classifies the reconcile rows through the decision-rule tree
 6. Phase 3a: searches the receipts inbox for manual_research rows by invoice number
-7. Phase 3b: processes unmatched BMCR rows — Stein Paint / BM National rows use SOSL document lookup (identifies both the BM National tx and the matching Stein tx); all other vendors use SOQL (full vendor name, exact amount, date ±1 day); prior-month carry-forwards annotated NTA
+7. Phase 3b: processes unmatched BMCR rows — pass-through-retailer / national-wholesale rows use SOSL document lookup (identifies both the wholesale tx and the matching pass-through-retailer tx); all other vendors use SOQL (full vendor name, exact amount, date ±1 day); prior-month carry-forwards annotated NTA
 8. Invokes the PDF scorer for Dbl_Check rows
 9. Generates the review packet xlsx (incl. the audit-gate tabs) + uploads to Drive `/BMCR Recon/` (sf_tx_before.csv snapshot taken first)
 10. **Does not write to SF** — the run stages proposed writes only; a human reviews the packet and runs the apply step to write approved rows (see "Audit gate")
@@ -178,6 +178,23 @@ python3 bmcr_recon.py --write-supplemental path/to/payload.csv
 
 ---
 
+## Scorer disposition (verified → Approved / No_Paint)
+
+After `--scores` re-scores live SF, each scored row (`BMCR_Status__c IN ('Dbl_Check','No Points Awarded')`) gets an automated end-state disposition based on the scorer output in `results.csv` (`our_eligible_points`, `bm_credited_points`, `pdf_count`, `eligible_skus`, `notes`):
+
+- **Dbl_Check → `Approved`**, appending `BMCR_Notes__c = "Verified MM/DD/YYYY"`, when `our_eligible_points <= bm_credited_points` (the manufacturer credited at least what our invoice supports → accept, nothing more is owed). When `our_eligible_points > bm_credited_points` the purchase is **under-credited** → hold as a dispute (do not auto-approve).
+- **No Points Awarded → `No_Paint`** when the scorer note is clean **and** `our_eligible_points = 0` (invoice genuinely has no eligible product).
+
+**Verification guard — never auto-write a "0" that came from a failed read.** Hold (route to the reviewer review tab, not SF) any row whose scorer note is `UNKNOWN_VENDOR` (vendor not in the SKU map), `MULTI_INVOICE_PDF_FILTERED (1/N)` (only 1 of N bundled invoices scored — the rest unread), or `NO_PDF_ATTACHED` / `pdf_count = 0`, plus any No-Points row that still has `eligible_skus` populated (scorer found product on a zero-award → possible under-credit). A `0` from any of these is *unverified*, not *verified zero* — auto-writing `No_Paint` there would both mislabel the row and risk writing off points the retailer may still owe.
+
+**Pass-through-retailer lines → `No_Paint`** via the No-Points path — this is the established reviewer standard, no special hook needed. The pass-through-retailer line earns nothing because the reward is submitted through the national wholesale account and lands on a **separate wholesale `Transaction__c`** (matched by invoice/Work-Order linkage, never by amount — the wholesale account is a wholesale channel). The credit is not lost; it's on the twin. See "Wholesale-account and pass-through-retailer transactions" below.
+
+**Held rows** go to a review tab in the scores workbook in the same column format as the `(scores)` tabs plus a `hold_reason` column, for a reviewer to copy into their review sheet (the pipeline holds only `drive.file` scope + xlsx upload, so it cannot write an existing external Google Sheet).
+
+> ⚠️ **`sf data update bulk` line-ending gotcha:** on macOS the CLI can reject a payload with `JobFailedError: LineEnding is invalid on user data. Current LineEnding setting is LF` when the file's line endings don't match. Normalize the payload to LF and pass `--line-ending LF` explicitly. **Nothing is written on this failure** (safe), but any code calling `sf data update bulk` should set the flag rather than rely on the default.
+
+---
+
 ## Output artifacts
 
 Per-run output in `BMCR Recon/<YYYY-MM-DD>/`:
@@ -252,9 +269,9 @@ Up to 25 records per composite request. HTTP 204 per record = success.
 
 ---
 
-## BMC Products file
+## BM Products file
 
-An updated `BMC Products_*.xlsx` is uploaded to the designated Drive folder periodically (no fixed schedule). The script auto-fetches the most recently modified file from this folder on each run (Step 0). Falls back gracefully to the last-downloaded local copy if Drive is unreachable.
+An updated `BM Products_*.xlsx` is uploaded to the designated Drive folder periodically (no fixed schedule). The script auto-fetches the most recently modified file from this folder on each run (Step 0). Falls back gracefully to the last-downloaded local copy if Drive is unreachable.
 
 Used by the PDF scorer to evaluate Dbl_Check rows for point eligibility.
 
@@ -272,21 +289,22 @@ Script auto-derives the prior month from the current filename and downloads both
 
 ## Known edge cases
 
-### BM National Account and Stein Paint transactions (Phase 3b)
-All Stein Paint and BM National rows in the BMCR that don't match via the main join are handled by Phase 3b using a SOSL document lookup. The vendor is identified upfront from the BMCR distributor field ("BENJAMIN MOORE", "BM National Account", or "stein").
+### Wholesale-account and pass-through-retailer transactions (Phase 3b)
+All pass-through-retailer and national-wholesale rows in the BMCR that don't match via the main join are handled by Phase 3b using a SOSL document lookup. The vendor is identified upfront from the BMCR distributor field (the manufacturer, the national wholesale account, or the pass-through retailer).
 
 Phase 3b searches SF by invoice number and discriminates results by document title:
-- **`Inv_5500` in title** → BM National invoice PDF → follow ContentDocumentLink → BM National `Transaction__c`
-- **`Invoices` title** → Stein combined invoice file (same file linked to multiple transactions) → match correct Stein tx by `ReferenceId__c`
+- **`Inv_5500` in title** → wholesale invoice PDF → follow ContentDocumentLink → wholesale `Transaction__c`
+- **`Invoices` title** → pass-through-retailer combined invoice file (same file linked to multiple transactions) → match the correct pass-through-retailer tx by `ReferenceId__c`
 
 Both transactions are identified in one pass and reported in the Update Notes annotation.
 
 Additional notes:
-- BM National rows do **not** get sent to the PDF scorer (wholesale ZWB SKUs not in BMC retail sheet)
-- Stein $0/$0 rows (BM submitted, not Stein direct) are a common sub-case of the above — handled by the same path
+- National-wholesale rows do **not** get sent to the PDF scorer (wholesale ZWB SKUs not in the BM retail sheet)
+- Pass-through-retailer $0/$0 rows (BM-submitted, not retailer-direct) are a common sub-case of the above — handled by the same path
+- **End-state disposition:** a real-amount pass-through-retailer line that earns nothing on its own submission is set to `No_Paint` (established reviewer standard). The reward is on the wholesale twin, not the retailer line — `No_Paint` on the retailer line is correct, not a lost credit. `$0` retailer placeholders instead sit at `None`/`Submitted` until the wholesale account processes them.
 
-### Ponderosa Paint Center
-`VendorBMRetailer__c = false` on Ponderosa's SF vendor record → excluded from SOQL pull entirely. BMCR rows for Ponderosa will always appear unmatched. If the SF transaction is otherwise correct and Approved, no action needed.
+### Excluded non-BM retailer
+`VendorBMRetailer__c = false` on this retailer's SF vendor record → excluded from SOQL pull entirely. BMCR rows for it will always appear unmatched. If the SF transaction is otherwise correct and Approved, no action needed.
 
 ### Customer charges receipts (Ring's End type)
 If a receipt in the receipts inbox is labeled "customer charges," do **not** create a `Transaction__c` in SF. Customer charge invoices are not tracked in SF. Receipt is sufficient documentation.
