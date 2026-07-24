@@ -88,6 +88,23 @@ Whether a WO "has transactions" is determined by querying related `Transaction__
 
 **Exclusions (Rule 2):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (see script config).
 
+### Rule 3: Opp still in an early stage + real WO already active → flag for Closed Won
+
+The mirror image of Rule 1 from the pre-close side. An opp still in **Opportunity Assigned** or **Estimate Sent** while a real (non-appointment) WO is already in an active status (Coordination, Scheduling, Work In Progress, On Hold, Complete Balance Owed, Complete Paid in Full, Closed) means work started but the opp never advanced. The WO is ground truth → the opp should be Closed Won.
+
+- **Flag all matches for manual review** — do not auto-change stage. Fix = the same 3-step quote sequence + CloseDate correction as Rule 1.
+- Same exclusions as Rules 1/2.
+
+### $0-amount Closed Won data check (financial-field clobber recurrence)
+
+A recurring **read-only** detector for a known failure mode: a WorkOrder after-save flow that writes the WO's financials up to the Opp had no work-type entry filter, so an estimate-appointment WO (value $0) saving after the real WO would **zero the Opp's amount fields** (last-writer-wins). Fixed forward by adding an entry filter that excludes appointment work types, but a recurrence detector belongs in the recurring run.
+
+- **Signature (precise, not the raw condition):** Opp `StageName = 'Closed Won'` AND `TotalAmount__c = 0` AND has a real active WO with `Quoted_Subtotal_with_Change_Order__c > 0` — i.e. the amount was clobbered and *should* be non-zero. Detecting on the raw "$0 Closed Won" condition alone floods with legitimately-$0 opps; the real-valued-WO join isolates the actual defect.
+- **Flag-only.** Fix = a **no-op re-save of the real WO** (`Status` → its current value), which re-fires the now-filtered flow and repopulates the four Opp financial fields. Idempotent (the flow writes only when a field differs). Requires the edit-closed bypass permission set since most real WOs are Closed.
+- Excludes self-managed owners, the corporate exclusion, and internal test opps.
+
+These two flag-only checks plus Rules 1/2 make the recurring run consume every condition on the source "bad Opp/WO data" review report (its two buckets: possible-no-WO → the field-triage no-WO report; status/data mismatch → Rules 1/2 + these two checks).
+
 ### Required sequence for any Opp stage change
 
 A synced quote fights the stage change and triggers a bounce-back. `Opportunity_SetCloseDateOnClosedWon` (record-before-save flow) fires during the bounce and stamps `CloseDate = today`, corrupting it even though the stage change ultimately fails.
@@ -133,7 +150,7 @@ Real (non-estimate) WOs where the job is fully complete should move to `Status =
 ### Auto-close criteria (all must be true)
 - `Status` NOT IN (Coordination, Scheduling, On Hold, Pending, Canceled, Closed)
 - `StartDate` and `EndDate` both set
-- `LaborDaysActual__c` != 0
+- **Attendance complete** — `LaborDaysActual__c` reaches the day estimate (see "Attendance completeness rule" below); merely `!= 0` is not enough. A partially-logged WO (e.g. 2 of 12 days) is **flagged**, not closed.
 - `Contractor__c` != null (crew assigned)
 - `RequestReview__c` != null
 - `BalanceOwed__c` within ±$0.01 (`>= -0.01 AND <= 0.01`) — only the unavoidable tax-rounding penny left after balance adjustments; the target is `$0`. Larger balances fall through to the small-balance adjustment pass first, then close on the next run. (Was `= 0`, briefly ±$0.05.)
@@ -179,3 +196,36 @@ Some licensee / commercial operators are not yet held to the attendance-logging 
 
 ### Preferred end state (retires 4b)
 Fold the exemption into the Section 4 candidate logic: drop `LaborDaysActual__c != 0` from the hard filter and enforce it in classification instead — require it **unless** the owner is attendance-exempt, in which case use `TotalPayoutsForLabor__c` as the work-happened signal per the rules above. Validate with a read-only pass before adopting so nothing over-closes.
+
+---
+
+## Attendance completeness rule
+
+Attendance is judged against the **day estimate**, not merely non-zero. A WO with a little attendance logged (e.g. 2 of 12 days) is *not* complete — closing it buries an under-logged job.
+
+```
+denom = LaborDaysProjected__c            if projected is credible (QuotedSubtotal__c / projected <= $1,500 per projected day)
+      = QuotedSubtotal__c / $572          otherwise
+attendance complete  ⇔  LaborDaysActual__c >= 0.80 * denom      (0 logged is always incomplete)
+```
+
+**Why the fallback:** `LaborDaysProjected__c` is a reliable denominator most of the time, but on a small share of WOs it's left as a 1–2-day placeholder on large-dollar jobs (a high-value job "projected" at 1 day). When `subtotal / projected` exceeds the credibility cap, projected is not trusted and a subtotal-implied day estimate is used instead. The constants are calibrated from the historical median of subtotal-per-actual-labor-day on cleanly-logged, closed WOs; recalibrate if job mix shifts.
+
+**Not a hard no-close for the field list** — below standard becomes a quantified email line ("attendance is X% below your projected labor days — logged A of D"). But for the **auto-close** pass (Section 4) it is a hard gate: partial-attendance WOs are flagged, never closed. The same rule governs both so triage and close stay consistent.
+
+---
+
+## Section 5 — Field Triage & Cleanup Emails
+
+The cleanup is the **whole ticket**, i.e. every linked report — not only the categories the automated phases fix. Records left on a linked report that need a human/field fix are emailed to the responsible field user (the opportunity owner), one email per person covering all their WOs.
+
+### Read the report, don't rebuild its filter
+Each linked report is a curated population. Read its rows via the **Analytics API** (`/services/data/vXX.0/analytics/reports/{id}?includeDetails=true`), not a hand-reconstructed SOQL filter — reconstructed filters drift from the report (owner exclusions, date/status nuances, folder scoping are easy to miss). Resolve records off `WorkOrderNumber`; the Analytics ID column's `label` is truncated. Use live SOQL only to *enrich* the report's rows with fields it doesn't carry, never to redefine the population.
+
+### Classify every record
+- **FIELD** — needs a field fix → goes in the owner's email, with the specific missing signals (Start/End dates, attendance shortfall, crew, request-review, undeposited $, wrong status).
+- **SLIDE** — auto-handled by another phase, an acceptable final state, too recent to act on, a self-managed owner, or an internal test WO.
+- **REVIEW** — route to management first (e.g. overpayment / negative-balance and owner-mismatch reports) before any field contact, rather than emailing the field directly.
+
+### Cadence & follow-up
+Most reports need **no ongoing list** — each run re-reads them fresh. The one persistent list is a follow-up tracker: a record that reappears across runs increments a follow-up count, and a 3rd follow-up escalates to the manager. Emails are generated as **drafts** for human review — never auto-sent. A human validates the field list before any draft goes out.
