@@ -82,6 +82,26 @@ The formula returns `"Check"` when any of the following are true:
 
 ---
 
+## Step 2b — Active-staff coverage gaps
+
+The allocation checkover and the allocation-vs-software comparison are both *comparisons*, so they are **blind when allocation and software agree at $0**. An active staff member with no software has allocation = $0 and software cost = $0 — not a mismatch — so a lapsed or un-provisioned active person can sit undetected: software shut off at fiscal-year close, but the profile never terminated or re-provisioned.
+
+The script asserts the **invariant** instead — *an active, non-terminated staff member must cost more than $0 and have an allocation* — via a two-way check:
+
+- **Direction A ($0 blind spot):** active staff whose active `Software__c` cost sums to $0. Catches removed software, missed terminations, and un-provisioned hires.
+- **Direction B (missing allocation):** active staff holding *paid* software but with **no** active `Allocation__c` record at all. A comparison that iterates allocations can't see a missing one; starting from the staff list catches it. (This is also why an allocation-anchored manual scan misses these people — enumerate *staff*, not allocations.)
+
+### Legitimate $0 exceptions
+
+Some active staff genuinely cost $0 and should not flag. Maintain two whitelists in the script:
+
+- **Free-software-only** — staff whose only active software is a free-tier product (e.g. the free Slack plan). Keyed by `(Type, License_Type)`.
+- **Named no-software staff** — active contractors who legitimately hold no company software. Keyed by `SFDC_Staff__c` Id (names can carry stray whitespace).
+
+Anything reading $0 that is not on a whitelist surfaces for review. To accept a new one, add it to the appropriate list with a one-line reason.
+
+---
+
 ## Step 3 — Cost consistency check
 
 Pull all active `Software__c` records and verify that every combination of `Type__c` + `License_Type__c` has a single consistent `Cost__c` value.
