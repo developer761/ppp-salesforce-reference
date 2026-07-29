@@ -129,6 +129,21 @@ WHERE RecordType.Name = 'Payment Out'
 
 ---
 
+## Post-Run QA (read before uploading)
+
+A read-only QA step runs automatically at the end of the clean-up (and can be re-run standalone on any past run's output). It compares the current run's DATALOAD against the most recent prior runs (default: last 5) and surfaces anything out of the ordinary **before** the Data Loader upload.
+
+**Checks:**
+- **Change-rate table** — for every `*NEW …` change column, the count and per-1,000-leads rate this run, next to the median rate of the prior runs, flagged `SPIKE` (rate ≥ 1.5× median) or `drop` (≤ 0.5× median). A noise floor (minimum absolute count) suppresses flags on tiny columns.
+- **Driver breakdown** — for each flagged column, the top old→new value transitions and the Lead Source distribution of the changed rows, so a spike points at its *cause*, not just its size.
+- **No-op writes** — changes where the old value already equals the new (case-insensitive). Must be 0; anything else is a script bug (e.g. a case-only difference written needlessly).
+- **Internal-record sanity** — records created by internal/admin test accounts must carry zero changes (they are ignored, and their ACD is cleared separately). Must be 0.
+- **Verdict** — a flagged spike is usually an upstream data change, not a clean-up bug.
+
+**Why it matters (worked example):** one run showed lead-medium changes at nearly double the usual rate. The driver breakdown pinned it to a large block of paid-social leads arriving with a blank Lead Medium and being backfilled to the paid-click medium — all from one source, no collateral on other sources. The clean-up was behaving correctly; the real signal was upstream — the ad-platform → CRM integration had stopped populating Lead Medium. Without the QA step this reads as a normal run; with it, the upstream issue is visible the same day.
+
+---
+
 ## Data Loader Upload (3 jobs, in order)
 
 ```bash
