@@ -137,3 +137,17 @@ Which corporate entity an Opportunity / WorkOrder belongs to is derived from its
 ## Brand
 
 - Colors: Orange `#EE662E`, Blue `#2BAAE1`, Green `#8DC442`, Navy `#172B4D` (primary text). Fonts: Roboto (body), Roboto Condensed (display/numbers).
+
+## SOQL / CLI traps
+
+- **`sf data query` silently caps at 50,000 rows, and under `--json` there is no warning at all.** The
+  result set simply contains 50,000 records and looks complete. Always chunk by date range and assert the
+  total against a matching `SELECT COUNT()`; a round 50,000 in a result set is a red flag, never a
+  coincidence.
+- **`NOT LIKE` is not a valid operator.** `NOT (field LIKE '...')` is.
+- **Aggregate queries cannot page** (`queryMore` is unsupported) — invert to a filtered non-aggregate
+  query or chunk by date.
+- **History objects:** `NewValue` is not filterable — filter in the client. Long text areas can be neither
+  filtered nor counted in SOQL.
+- **SOQL cannot compare two fields to each other** (e.g. work order owner ≠ opportunity owner) — fetch
+  both and compare client-side.

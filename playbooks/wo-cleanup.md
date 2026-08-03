@@ -4,6 +4,33 @@ Recurring cleanup of three categories of WorkOrder data violations in PPP's Sale
 
 ---
 
+
+## What this process is for
+
+**The cleanup keeps work order records accurate — it is not a collections process.** Chasing customer
+balances sits with the field team; this process only ensures the record matches what actually happened,
+so jobs can close and the data can be trusted.
+
+That distinction changes how the time-based checks read. A work order that has sat untouched past its
+window is flagged **to capture a change**, not to chase money: a job that stalls with nothing logged has
+usually been rescheduled, re-scoped or canceled without anyone updating the record. The ask is
+"what happened?", so the record can be corrected.
+
+Dollar figures are used to size and rank the work, never as a recovery target.
+
+### Measurement traps
+
+- **`EndDate` is an estimated date**, not when work actually ended. Do not build duration or completeness
+  metrics on it. For any timing measure use the status change into a Complete status → the change to
+  Closed; both are real recorded events.
+- **`BalanceOwed__c` is structurally ~$0 on any Closed work order** — closing settles it. A rule operating
+  on closed records will always look like near-zero exposure no matter how incomplete the records are, so
+  read the record count rather than the dollars. There is no single dollar metric spanning open and closed
+  rules: balance for open, quoted value for closed.
+- **Work order status history has a retention horizon** (roughly 18 months). There is no close-date field,
+  so for anything closed before that horizon the close date is unrecoverable. Cohort analysis keyed on
+  created date avoids the limit and is less distorted by backlog clearing.
+
 ## Section 1 — Estimate Appointment WO Violations
 
 WOs whose `WorkType.Name` contains "Estimate Appointment" should be inert: `Status = Pending`, no dates, no crew, no transactions, no change orders, no balance.

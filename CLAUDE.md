@@ -26,7 +26,7 @@ This repository is publicly visible on the internet. Everything committed here c
 ## Index
 
 ### `salesforce/` — schema & metric definitions
-- **`BUSINESS_RULES.md`** — start here. Conventions and field gotchas: fiscal year, the canonical sales metric, quota = points, the GM / field-naming / `IsClosed` traps, lead-source classification, sales tax.
+- **`BUSINESS_RULES.md`** — start here. Conventions and field gotchas: fiscal year, the canonical sales metric, quota = points, the GM / field-naming / `IsClosed` traps, lead-source classification, sales tax, and the SOQL / CLI traps (including the silent 50,000-row query cap).
 - **`DATA_DICTIONARY.md`** — full schema reference (custom fields, objects, flows, triggers, validation rules, record types). Snapshot from production 2026-05-11.
 - **`REP_PERFORMANCE_KPIS.md`** — exact definitions of the rep-scorecard KPIs (sanitized: logic only, no comp data).
 - **`architecture_*.md`** — Mermaid maps of how objects connect (sales pipeline, service delivery, fleet & quota, compliance, marketing/geo).
