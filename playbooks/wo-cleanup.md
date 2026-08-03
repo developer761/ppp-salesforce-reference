@@ -75,12 +75,41 @@ Whether a WO "has transactions" is determined by querying related `Transaction__
 
 - **Flag all matches for manual review** — do not auto-change stage
 - Reviewer sets `StageName = 'Closed Won'` and corrects `CloseDate` (3-step quote sequence required — see below)
-- `CloseDate` should be set to a meaningful date (WO end date or last payment date)
+- `CloseDate` is set using the **three-tier fallback** below — not the WO end date or last payment date
+
+#### Setting `CloseDate` on a corrected opp — three-tier fallback
+
+`CloseDate` means **when the deal was booked**, not when the job was delivered or paid — realized sales
+anchor on it (see `BUSINESS_RULES.md`). An opp being promoted into Closed Won by these rules often has no
+legitimate close date to restore, so supply one in this order:
+
+1. **Restore the pre-corruption value from `OpportunityFieldHistory`** (`Field = 'CloseDate'`).
+   Authoritative whenever the opp did legitimately close once. See the recovery query below.
+2. **No history → use the real WO's `CreatedDate`.** The WO-creation chain fires on Closed Won + a synced
+   quote, so WO creation is a booking-time proxy for the sale.
+3. **Never use WO end date or last payment date.** Those are delivery/collection dates. Measured against
+   production, they fall in a *different calendar month* than the WO's created date roughly 58% and 66% of
+   the time respectively — which posts the sale 1–8 months after it happened. By contrast `CloseDate` and
+   WO `CreatedDate` already agree on ~99% of opps under normal operation, so a month-level mismatch is a
+   reliable corruption signal rather than noise.
+
+⚠️ **`CloseDate` has two independent setters** — an Apex before-update handler and a record-before-save
+flow, both firing on the transition into Closed Won. Any correction must survive both.
 
 **Exclusions (Rule 1):** estimate appointment WOs, opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (see script config).
 
 ### Rule 2: Opp Closed Won + all real WOs Canceled → update Opp stage to Opportunity Lost
-**Logic:** If all real WOs are canceled, no work was done. The Opp stage should reflect that.
+**Logic:** If all real WOs are canceled, the job did not proceed and the Opp stage should reflect that.
+
+⚠️ **Attendance is deliberately NOT a gate on this rule.** Logged attendance or payouts on a *canceled*
+WO is normal, not a data error — crew days can be recorded before a job is called off, and those balances
+are not collected. An opp whose real WOs are all canceled moves to Lost **even when attendance exists**.
+Do not "fix" this by adding an attendance check.
+
+⚠️ **Canceled only — this rule must not extend to Pending.** A real WO sitting in Pending is a *user
+error* (Pending is the creation default that real WOs are advanced off of), not a dead deal. Treating
+all-Pending the same as all-Canceled would move live deals to Lost. Pending real WOs are caught by their
+own check instead.
 
 - **Auto-update stage to Opportunity Lost** if no related `Transaction__c` records exist on any WO
 - **Flag** if `Transaction__c` records are present — validate record dates vs current FY before updating; pre-FY records are generally safe to proceed
@@ -135,9 +164,22 @@ Changing `Opportunity.StageName` triggers territory validation. Some opps fail w
 **Fix:** Add the zip to the out-of-area ST → update the opp stage → remove the zip. Hyphenated zips (`11801-4431`) may need the 5-digit form (`11801`) added — check whether the base form exists first.
 
 ### `FY_Assigned__c` — no auto-update on CloseDate change
-`Opportunity.FY_Assigned__c` (text, e.g. "2026") represents the PPP fiscal year the opp is assigned to, using the FY **starting** year. No flow updates it when CloseDate changes — run a separate correction pass if CloseDates are bulk-corrected.
+`Opportunity.FY_Assigned__c` (`Text(10)`, e.g. "2026") represents the PPP fiscal year the opp is assigned to, using the FY **starting** year. No flow updates it when CloseDate changes — run a separate correction pass if CloseDates are bulk-corrected.
 
-Formula: `month >= 2 → FY = CloseDate.year; month == 1 → FY = CloseDate.year - 1`
+⚠️ **It is not a formula and is not derived from `CloseDate`.** An earlier version of this playbook
+documented it as `month >= 2 → FY = CloseDate.year; month == 1 → FY = CloseDate.year - 1`. That describes
+the *intent*, not the implementation. In practice the field is written by the same record-before-save flow
+that stamps `CloseDate` on the transition into Closed Won, and the value it writes is a **hardcoded text
+template** that must be edited manually each fiscal year. Consequences:
+
+- Correcting a `CloseDate` across a fiscal-year boundary leaves `FY_Assigned__c` stamped with the value
+  that was hardcoded at the time of the stage change — it will not follow the corrected date.
+- If the template is not updated at the FY rollover, opps in the new FY are silently stamped with the
+  **prior** year. A wrong value is worse than a blank one: blanks are visibly missing, wrong values aren't.
+- `FY_Status__c` is a formula off `FY_Assigned__c`, so a blank or stale `FY_Assigned__c` propagates into
+  any report filtering or grouping on FY status.
+
+Verify the current template value before relying on the field at the start of any fiscal year.
 
 PPP FY starts Feb 1 (FY26 = Feb 1, 2026 – Jan 31, 2027).
 
