@@ -20,9 +20,10 @@ Dollar figures are used to size and rank the work, never as a recovery target.
 
 ### Measurement traps
 
-- **`EndDate` is an estimated date**, not when work actually ended. Do not build duration or completeness
-  metrics on it. For any timing measure use the status change into a Complete status → the change to
-  Closed; both are real recorded events.
+- **`EndDate` is an estimated date**, not when work actually ended, so don't use it as the basis for
+  duration or timing *metrics*. (It remains valid inside the cleanup rules themselves — this is a
+  reporting caveat, not a rule caveat.) For any timing measure use the status change into a Complete
+  status → the change to Closed; both are real recorded events.
 - **`BalanceOwed__c` is structurally ~$0 on any Closed work order** — closing settles it. A rule operating
   on closed records will always look like near-zero exposure no matter how incomplete the records are, so
   read the record count rather than the dollars. There is no single dollar metric spanning open and closed
