@@ -180,7 +180,17 @@ WC match is suppressed entirely (treated as no-match) for:
 - Any lead whose SF LS is in the **protected sources** list: `Field-Generated`, `Customer Referral`, `Walk Up`, `cold call`, `Pro Referral`
 - Leads created by **Vendor - WU team creators** (configured by name in script) — their leads always get WU values regardless of WC
 - Leads created by a **second affiliate vendor team** (configured by name in script, separate from WU) — their leads always get their affiliate LS values regardless of WC
-- Leads created by **field users** (Profile `*Standard.Field` + hardcoded names) where SF LS is blank — field users with a blank source get Rule 3 applied, not a WC override
+- Leads created by **field users** (Profile `*Standard.Field` + hardcoded names) — field-created leads get the field rule applied, not a WC override, **regardless of whether SF LS is already populated**
+
+  > This suppression used to be conditional on SF LS being *blank*. That guard silently
+  > stopped working once the native WC→CRM integration began back-filling
+  > LS/LM/LG/ad-cost-detail within hours of lead creation: by the time the bi-weekly
+  > clean-up ran, the source was never blank, so field-generated leads were being
+  > attributed to paid and organic marketing channels and consuming that channel's ad-cost
+  > record. The creator now wins outright — an automated back-fill does not outrank the
+  > human who created the lead. Sources handled by earlier rules (Previous Customer,
+  > the vendor/affiliate sources, Customer Referral) are unaffected, since those branches
+  > are evaluated before the field rule.
 - Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the creator login is not a designated vendor team account; WC is suppressed and vendor values are applied. This detection runs for each configured affiliate vendor (currently two: WU and a second affiliate).
 
 Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by phone first then email, within **±2 days** of SF `CreatedDate`.
@@ -196,7 +206,7 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 | 2 | SF LS = Previous Customer + non-CC | Fill SF LM→Repeat if blank, SF LG→Repeat if blank; do NOT auto-update from WC |
 | 3 | CC-created + SF LS blank, OR CC-created + SF LS=Google with no SF LM/LG | Accept WC LS/LM/LG values |
 | 4 | WC LS = GMB and (SF LS is GMB, OR SF LS is blank) | Set SF LS=GMB, SF LM=Organic, SF LG=GMB |
-| 5 | SF LS is blank (non-CC, non-field-user — field users with blank LS have WC match blocked upstream and never reach this tier) | Set SF LS/LM/LG from WC |
+| 5 | SF LS is blank (non-CC, non-field-user — field-created leads have WC match blocked upstream and never reach any tier) | Set SF LS/LM/LG from WC |
 | 5b | SF LS == WC LS AND (SF LM is blank OR SF LM == WC LM) | Update SF LM/LG from WC |
 | 5b (conflict) | SF LS == WC LS but SF LM ≠ WC LM (both populated) | → Lead Review for medium conflict |
 | 6 | Source conflict + creator is known Meta creator (either side says Meta) | Apply Meta values: SF LS=Meta, SF LM=CPC, SF LG=Social |
@@ -225,7 +235,7 @@ attribution, so there is nothing first-party to preserve, and those still go to 
 | 2b | Second affiliate vendor creator, OR downstream WO evidence confirms that affiliate's relationship, OR SF LS = that affiliate's LS value (any creator) | SF LS=[affiliate LS], SF LM=Referral, SF LG=Other Marketing. **No ACD assigned** — this affiliate is intentionally excluded from cost/corp reporting. |
 | 3 | SF LS = Customer Referral + CC-created + no Referring Account | → Lead Review |
 | 3b | SF LS = Customer Referral + Referring Account linked (field-gen referral) | Pass through; update SF LM→Referral if blank, SF LG→Referral if blank |
-| 4 | SF LS = Field-Generated, OR field creator + SF LS blank | SF LS=Field-Generated if blank; SF LM→Self-Generated if blank, SF LG→Self-Generated if blank |
+| 4 | SF LS = Field-Generated, OR **any** lead created by a field user | Force SF LS=Field-Generated (overwriting a back-filled marketing source), SF LM→Self-Generated, SF LG→Self-Generated. The ad-cost-detail lookup then re-points to that territory/month's **self-gen/repeat** record instead of the paid or organic one. |
 | 5 | SF LS in fixed-override sources (e.g. `chatgpt.com`) | Apply fixed SF LM/LG values for that source (e.g. chatgpt.com → LM=Referral, LG=AI) |
 | 6 | SF LS = Meta, OR lead created by known Meta creator | SF LM→CPC if blank, SF LG→Social if blank |
 | 7 | Lead created by known marketing creator + SF LS blank | → Lead Review |
