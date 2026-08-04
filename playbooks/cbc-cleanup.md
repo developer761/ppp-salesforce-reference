@@ -140,6 +140,22 @@ A read-only QA step runs automatically at the end of the clean-up (and can be re
 - **Internal-record sanity** — records created by internal/admin test accounts must carry zero changes (they are ignored, and their ACD is cleared separately). Must be 0.
 - **Verdict** — a flagged spike is usually an upstream data change, not a clean-up bug.
 
+**Known limitation — the rate is normalised against the wrong denominator.** The per-1,000
+rate divides by *every* lead in the window, not by the leads that still needed cleaning.
+Because the window is a fixed rolling 30 days, running sooner than the usual interval means
+most rows were already cleaned and uploaded on the previous run, so they legitimately produce
+no changes — and every column reads as a `drop` even though nothing changed.
+
+Worked example: a run made 6 days after the prior one had 78% of its window already cleaned.
+The headline table showed drops of 0.1×–0.4× across every column. Splitting the window at the
+prior run's end date showed leads created since then changing at 555.6 per 1,000 versus 566.2
+per 1,000 on the prior run — flat. Nothing had dropped; the denominator had grown with
+already-clean rows.
+
+Before treating a broad drop as real, split the window at the prior run's end date and compare
+the change rate of the *new* segment only. Uniform drops across every column point at cadence;
+a genuine data change is almost never that even.
+
 **Why it matters (worked example):** one run showed lead-medium changes at nearly double the usual rate. The driver breakdown pinned it to a large block of paid-social leads arriving with a blank Lead Medium and being backfilled to the paid-click medium — all from one source, no collateral on other sources. The clean-up was behaving correctly; the real signal was upstream — the ad-platform → CRM integration had stopped populating Lead Medium. Without the QA step this reads as a normal run; with it, the upstream issue is visible the same day.
 
 ---
@@ -184,7 +200,19 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 | 5b | SF LS == WC LS AND (SF LM is blank OR SF LM == WC LM) | Update SF LM/LG from WC |
 | 5b (conflict) | SF LS == WC LS but SF LM ≠ WC LM (both populated) | → Lead Review for medium conflict |
 | 6 | Source conflict + creator is known Meta creator (either side says Meta) | Apply Meta values: SF LS=Meta, SF LM=CPC, SF LG=Social |
+| 6 (web-form) | Source conflict + lead created by the web-to-lead API endpoint + SF LS is Meta or an Angi variant | Keep the SF source; correct SF LM/LG to match it. No review flag |
 | 6 | All other source conflicts | → Lead Review |
+
+**Why the web-form exception:** a lead created by the web-to-lead API endpoint means the
+customer submitted a form, and the endpoint stamps `LeadSource` from that form. That is
+first-party, self-reported attribution and outranks WhatConverts' session/referrer
+inference, so the SF value is kept rather than sent for review.
+
+Scope is deliberately limited to Meta plus Angi-family sources (matched on an `angi`
+prefix, which covers the several spelling variants in the picklist). It is **not** applied
+to every API-created lead — the reasoning generalizes, but the approved scope does not.
+`(direct)` is outside the exception by construction: it means the endpoint captured *no*
+attribution, so there is nothing first-party to preserve, and those still go to review.
 
 ---
 
@@ -314,7 +342,7 @@ Territories that periodically have no ACD and always route to Lead Review:
 - **Inactive service territories route to Out of Area** — leads can exist in SF under a service territory that has since been deactivated. Because inactive STs are excluded from the zip code → territory mapping, those leads will never receive a valid ACD for their original territory. The script detects this at runtime by querying `ServiceTerritory WHERE IsActive = false` and automatically reroutes any such lead to the Out of Area territory and its corresponding ACD. The `*NEW ST` column is populated so the territory is corrected on upload.
 - **LG re-upload is required** — the LS+LM→LG automation fires on any LS or LM change and can wipe a manually-set LG. Always run job 3 after jobs 1 and 2.
 - **Catch-all fires last** — after all rules run, any lead or opp still missing LS, LM, LG, or ACD is flagged with a list of the missing fields. This catches edge cases no specific rule covers (e.g. a lead with a known LS but blank LM/LG that fell through uncorrected).
-- **WU ACDs have no Service Territory** — they won't appear in by-state CBC breakdowns (by design). They appear in Full Company reports.
+- **The wallpaper subsidiary's ACDs are matched on a notes tag, not on territory** — the durable lookup key is a fixed marker string on the ACD's notes field, set by hand on each new monthly ACD. Historically these ACDs carried no Service Territory; they now do carry a dedicated one, so do **not** write logic that assumes the territory is empty. Match on the notes tag. Also do not match on the corporate account name — that entity has been renamed once already, which silently stranded leads on the wrong ACD until it was caught.
 - **`ACD_Checkover__c` on Opp is a formula** that produces the same value as `ACD_Checkover_Corp_Name__c` on the ACD record. The outside-territory lookup already handles this matching correctly, so the field isn't needed for assignment — but comparing `Opp.ACD_Checkover__c` to the assigned ACD's `ACD_Checkover_Corp_Name__c` can serve as a post-assignment sanity check.
 - **Opp upload batch conflicts on ACD** — a process (`Opportunity.AdCostDetailUpdate`) fires on ACD changes and SF limits updates to the same ACD record to 12 per batch. When many opps share the same ACD, some will fail with `DUPLICATE_VALUE`. Fix: extract the failed records from the SF bulk results file and retry them as a small standalone batch — the smaller batch stays within the limit.
 - **`Lead_Medium__c` case-normalization on write** — SF silently lowercases values written to this picklist (e.g., a bulk update of `CPC` lands as `cpc`; `Referral` lands as `referral`). `LeadGroup__c` and `LeadSource` do **not** auto-normalize — they store exactly what you write. Not a bug — script output for LM can use any case; SF handles it. Just don't rely on LM case downstream (query filters, comparisons) — normalize to lowercase.
