@@ -191,7 +191,22 @@ WC match is suppressed entirely (treated as no-match) for:
   > human who created the lead. Sources handled by earlier rules (Previous Customer,
   > the vendor/affiliate sources, Customer Referral) are unaffected, since those branches
   > are evaluated before the field rule.
-- Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the creator login is not a designated vendor team account; WC is suppressed and vendor values are applied. This detection runs for each configured affiliate vendor (currently two: WU and a second affiliate).
+- Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the login on the record is not a designated vendor team account; WC is suppressed and vendor values are applied. This detection runs for each configured affiliate vendor (currently two: WU and a second affiliate).
+
+  > **Key the detection on the opportunity OWNER, not the creator.** Reassignment is an
+  > ownership action, and coordinators routinely create the lead on the vendor principal's
+  > behalf — so creator-only detection goes blind exactly where the vendor principal did not
+  > key the record in himself. Retain the creator as an additional trigger so nothing
+  > previously detected regresses. Raise the owner-reassignment review flag **only when the
+  > opportunity is still on the non-vendor login**; once it has been reassigned there is
+  > nothing to action, and flagging it again is noise.
+  >
+  > Two limits worth stating plainly. First, **crew or payment evidence proves who performed
+  > the work, not who sourced the lead** — a house lead subcontracted to a vendor crew looks
+  > identical to a vendor-sourced one, so this is strong evidence rather than proof, and it is
+  > a weaker claim for records carrying a real paid marketing source. Second, the clean-up
+  > runs on a **rolling 30-day window**, so any backlog older than that window will never
+  > surface in a routine run and has to be worked from a one-off query.
 
 Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by phone first then email, within **±2 days** of SF `CreatedDate`.
 
