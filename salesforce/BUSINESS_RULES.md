@@ -218,6 +218,46 @@ horizon, "no edit recorded" means *unknowable*, not *unedited*. Before quoting a
 history, **split the population into covered and uncovered**, quote the rate only over the covered set,
 and label any extension to the uncovered set as an inference.
 
+## ⚠️ Validation-rule formula traps — an Active rule is not an enforcing rule
+
+**`ISNULL()` on a Text field is ALWAYS FALSE.** Text fields are *blank*, never null — the null test is
+`ISBLANK()`. Any rule whose `AND()` opens with `ISNULL(<some text field>)` can therefore **never fire**,
+while still showing as Active in Setup and appearing in every rule inventory.
+
+Found in production 2026-08-06 on `WorkOrder.RequestReview_If_Complete`:
+
+```
+IF(AND(ISNULL(LegacyId__c),
+       OR(ISPICKVAL(Status,"Complete Paid in Full"), ISPICKVAL(Status,"Complete Balance Owed")),
+       ISPICKVAL(RequestReview__c,"")), true, false)
+```
+
+`LegacyId__c` is Text, so the rule had never fired since its creation in 2023. It was widely believed to
+be what enforced Request Review on Complete statuses; a separately-authored rule was doing that work.
+
+**Diagnostic:** a record saved that the rule should have blocked. Don't stop at the rule list — pull the
+formula (`SELECT Metadata FROM ValidationRule … --use-tooling-api`) **and** check the referenced field's
+`type` in the object describe. Compile-check any candidate fix with a **check-only deploy**
+(`sf project deploy start --dry-run`), which validates the formula without committing it.
+
+⚠️ **Repairing a long-dead rule is usually the wrong move.** The record population has drifted for years
+under no enforcement. If the rule also lacks `ISCHANGED(...)` and a `$Permission` bypass, correcting the
+null test will start blocking **every save** on that entire backlog — including automation and integration
+writes — not just new transitions. Prefer deactivating it and folding the intent into a rule that already
+works and is properly gated.
+
+**Related trap — `$Profile.Name` is the RUNNING USER's profile, not the record owner's.** For an
+owner-based carve-out on an object with a polymorphic owner, use `Owner:User.Profile.Name`. Mixing the two
+fails in both directions: it exempts anyone *with* that profile editing *any* record, and still blocks
+another user editing a record *owned* by that profile. `Owner:User.Profile.Name` is valid in a WorkOrder
+validation rule (confirmed by check-only deploy); it evaluates to null on a queue-owned record, which
+makes a `NOT(CONTAINS(...))` carve-out fail safe (the rule still fires).
+
+**Prefer profile over free-text `CompanyName` for entity carve-outs.** `CompanyName` is a free-text User
+field: a new user with it blank or misspelled is silently *not* carved out, and anyone who happens to type
+the matching string silently *is*. Profile names are controlled values. This matters most where an entity
+has been renamed — a carve-out matching the old trading name quietly matches nobody.
+
 ## SOQL / CLI traps
 
 - **`sf data query` silently caps at 50,000 rows, and under `--json` there is no warning at all.** The
