@@ -271,17 +271,72 @@ Fold the exemption into the Section 4 candidate logic: drop `LaborDaysActual__c 
 
 ## Attendance completeness rule
 
-Attendance is judged against the **day estimate**, not merely non-zero. A WO with a little attendance logged (e.g. 2 of 12 days) is *not* complete — closing it buries an under-logged job.
+Attendance is judged against the **day estimate**, not merely non-zero — but the bar is a **floor**, not a completeness standard.
 
 ```
 denom = LaborDaysProjected__c            if projected is credible (QuotedSubtotal__c / projected <= $1,500 per projected day)
       = QuotedSubtotal__c / $572          otherwise
-attendance complete  ⇔  LaborDaysActual__c >= 0.80 * denom      (0 logged is always incomplete)
+attendance complete  ⇔  LaborDaysActual__c >= 0.30 * denom      (0 logged is always incomplete)
 ```
+
+**Why 30% and not a completeness bar.** The threshold was 80% until it was re-derived against the
+data: the median crew logs ~92% of the day estimate, so an 80% bar flagged roughly a third of all
+graded work orders — overwhelmingly jobs slightly under estimate, not jobs nobody logged. The
+operational objection that settled it: a job *sold for ten crew and delivered with four* is a
+legitimate outcome, and that is 40% — so any bar at or above 50% flags exactly the case the business
+considers acceptable. 30% clears it with margin and still catches token logging (a handful of days
+against a hundred-day estimate).
+
+**What this knowingly gives up:** persistent partial-logging is no longer detected. A crew logging
+three of ten days every time will pass indefinitely. That trade was accepted deliberately — a
+near-binary test needs no per-case override system, which was the stated requirement. Below-bar
+records are labelled **zero-vs-token** ("no attendance logged" / "partial attendance"), since at a 30%
+bar an estimate being slightly high can no longer explain the gap.
+
+⚠️ **Lowering an attendance bar does not simply reduce outreach — it reclassifies records.** Once a WO
+stops counting as missing attendance it reads as *complete*, so it moves out of the field-ask
+population and into the **auto-close candidate** population. Re-check the auto-close queue after any
+change to this threshold; the volume that leaves one list arrives on the other.
 
 **Why the fallback:** `LaborDaysProjected__c` is a reliable denominator most of the time, but on a small share of WOs it's left as a 1–2-day placeholder on large-dollar jobs (a high-value job "projected" at 1 day). When `subtotal / projected` exceeds the credibility cap, projected is not trusted and a subtotal-implied day estimate is used instead. The constants are calibrated from the historical median of subtotal-per-actual-labor-day on cleanly-logged, closed WOs; recalibrate if job mix shifts.
 
-**Not a hard no-close for the field list** — below standard becomes a quantified email line ("attendance is X% below your projected labor days — logged A of D"). But for the **auto-close** pass (Section 4) it is a hard gate: partial-attendance WOs are flagged, never closed. The same rule governs both so triage and close stay consistent.
+**Not a hard no-close for the field list** — below the bar becomes a quantified email line ("attendance is X% below your projected labor days — logged A of D"). The same rule governs the field list and the auto-close pass so triage and close stay consistent. Note this is now a *floor*: a work order logging 30–80% of its estimate is treated as complete and **is** eligible to auto-close.
+
+⚠️ **Scope the attendance test to the owners actually on the policy.** Attendance logging is a
+requirement for one field organisation, not the whole company. A gate that applies it to every owner
+holds back work orders that are genuinely closeable — this defect has appeared independently in two
+separate scripts (the auto-close exporter and the pre-flight checker), each time as a hard
+`LaborDaysActual__c != 0` filter with no owner scoping. Resolve the owner's team membership from the
+live manager chain and apply the test only to that set.
+
+### Payout floor — gate the auto-close, not the record after it closes
+
+A work order can satisfy every close-out test and still not be finished being **paid out**. Because a
+closed WO is edit-locked, a premature close is expensive to reverse — so the payout test belongs
+*before* the close, as a condition on the auto-close rule rather than as a separate finding on already-closed records.
+
+```
+payout ratio = TotalPayoutsForLabor__c / (quoted value with change orders
+                                          − materials cost, when materials are included in the contract)
+auto-close allowed  ⇔  payout ratio >= 0.20      (below → route to human review)
+```
+
+**Net out materials before judging the ratio.** A material-heavy job legitimately shows low labor
+content, and netting materials removed roughly **half** the non-zero exceptions at the same threshold —
+they were artifacts of the denominator, not payout problems.
+
+**Denominator caution:** use the quoted-subtotal-with-change-order field, **not** the plain quoted
+subtotal. The latter is inflated on work orders carrying *denied* change orders (a known formula
+defect), which understates the ratio on exactly the records most likely to look anomalous.
+
+**Why a floor is defensible here** (unlike attendance, where the spread was too wide): labor runs a
+tight share of quoted value — roughly p25 48% / median 56% / p75 64% net of materials, with per-entity
+medians spanning only ~40–61% across 30+ operating accounts. Below 20% is a genuine empty zone. The
+exceptions it surfaces cluster by **owner**, not by work type, so treat them as a payout-recording
+conversation rather than a per-record field ask.
+
+⚠️ If a shipped "job costing percent" style field computes this ratio **without** netting materials,
+anything reporting on it understates labor share by several points.
 
 ---
 
