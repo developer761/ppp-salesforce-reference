@@ -225,8 +225,19 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 | 5b | SF LS == WC LS AND (SF LM is blank OR SF LM == WC LM) | Update SF LM/LG from WC |
 | 5b (conflict) | SF LS == WC LS but SF LM ≠ WC LM (both populated) | → Lead Review for medium conflict |
 | 6 | Source conflict + creator is known Meta creator (either side says Meta) | Apply Meta values: SF LS=Meta, SF LM=CPC, SF LG=Social |
+| 6 (legacy platform) | Source conflict + CC-created + SF LS is the legacy platform name (`Facebook` / `Instagram`) + WC LS = Meta | Accept WC: SF LS=Meta, SF LM=CPC, SF LG=Social. No review flag |
 | 6 (web-form) | Source conflict + lead created by the web-to-lead API endpoint + SF LS is Meta or an Angi variant | Keep the SF source; correct SF LM/LG to match it. No review flag |
 | 6 | All other source conflicts | → Lead Review |
+
+**Why the legacy-platform exception:** the two social platforms were folded into a single
+advertising brand, and WhatConverts reports the current brand name while coordinators still
+type the older platform names by hand. Both labels describe the same channel, so this is a
+naming lag rather than a genuine attribution disagreement — the WC value is applied.
+
+⚠️ **The two "6" exceptions point in opposite directions and must not be merged.** The
+legacy-platform rule *accepts* WC and is scoped to **CC-created** leads; the web-form rule
+*keeps* the SF source and is scoped to **API-created** leads, where the legacy platform names
+are explicitly excluded. Same source values, opposite handling, decided by creator type.
 
 **Why the web-form exception:** a lead created by the web-to-lead API endpoint means the
 customer submitted a form, and the endpoint stamps `LeadSource` from that form. That is
