@@ -299,3 +299,111 @@ Each linked report is a curated population. Read its rows via the **Analytics AP
 
 ### Cadence & follow-up
 Most reports need **no ongoing list** — each run re-reads them fresh. The one persistent list is a follow-up tracker: a record that reappears across runs increments a follow-up count, and a 3rd follow-up escalates to the manager. Emails are generated as **drafts** for human review — never auto-sent. A human validates the field list before any draft goes out.
+
+**The hand-off is the sheet, not the email.** Run the detection sweep (read-only) → publish the review sheet → **stop there.** Drafting or sending field emails requires an explicit go-ahead **each cycle**, not a standing one. A record landing in the FIELD bucket is a *candidate* for outreach, not an instruction to send. A leftover drafts file in the working folder is a source artifact from a prior cycle — never treat its presence as evidence that emails are outstanding.
+
+**Track dispositions on the sheet, and re-read it immediately before acting.** The working population is the review sheet filtered to rows with an empty disposition column — not a fresh SOQL pull. The reviewer edits that column continuously while working, so a count captured minutes earlier is already stale.
+
+---
+
+## Enforce at the gate, not after the fact
+
+A recurring failure mode: a rule that fires on **already-closed** records asks someone to reconstruct
+information from months ago, so every row gets dismissed. The same rule applied while the record is still
+**open** is actionable, because the person who can fix it still has the leverage to.
+
+Worked example — attendance. A rule flagged closed work orders whose crew days were never logged, keyed on
+*when the record was closed*. A job worked in May but closed in August therefore owed attendance months
+after the fact; 55 records surfaced and 53 were dismissed as not-worth-doing. The team lead's own policy
+was **"don't close it until attendance is entered"** — a close gate, i.e. leverage that only exists before
+closing. Correct resolution: **remove the check from closed records entirely, keep it on open ones, and
+enforce it with a validation rule at close.** Detection moved upstream, the dismissal rate went to zero,
+and the backlog of unfixable history stopped being generated.
+
+**Generalise:** before adding a rule that inspects finished records, ask what action it implies and whether
+anyone can still take it. If the answer is "reconstruct it from memory," the rule belongs at the gate.
+
+## Scope exclusions are a design surface, not a footnote
+
+Cleanup rules accumulate populations that must be treated differently. Make each an explicit, documented
+decision rather than an inherited filter:
+
+- **Onboarded/migrated operators** — historical records loaded in after the fact will not satisfy
+  date-relationship rules (close date vs record created date), because the dates describe the migration,
+  not the work. Exclude them from date-based rules specifically, not from the cleanup wholesale.
+- **Self-managed divisions** — a division that runs its own cleanup still benefits from *data-integrity*
+  findings surfaced to its manager, who may not see them in their own reports. Split by rule type:
+  integrity findings route to them; close-readiness prompts ("this record needs X before it can close") do
+  not. Wholesale exclusion hides real defects; wholesale inclusion is nagging.
+- **Per-field policy exemptions** — where a requirement genuinely doesn't apply to a group (e.g. a review
+  request some operators never solicit), key the exemption on **profile**, not a hardcoded user list, so
+  new users are covered automatically. ⚠️ Never key it on a person's *name*: near-identical names across
+  different profiles are common, and a name match will silently exempt the wrong user.
+
+## Rules that fire on finished records need a staleness ceiling
+
+The companion to "enforce at the gate." Where a gate isn't available, a rule that inspects completed
+records must **age out**, or it manufactures an unfixable backlog in perpetuity — every cycle it
+re-presents the same rows, and every cycle they are dismissed.
+
+Worked example — missing crew payouts and missing review requests on closed work orders. Both tests fired
+at any age, so they surfaced hundreds of rows about jobs finished a year or more earlier. The operating
+reality is that **crews chase their own payment**: a job whose work ended two months ago with no payout
+recorded is settled in practice, not an open gap. Resolution: **stop flagging either once the record is
+more than 60 days past its end date.** Fields that describe what happened — start, end, crew, undeposited
+payments — are *not* aged out; those stay wrong forever and remain flagged at any age.
+
+**The distinction that matters:** age out the tests whose *answer decays* (was this paid? was a review
+requested?). Never age out the tests whose answer is permanent (who did this work?).
+
+⚠️ **Same threshold, opposite polarity — do not "harmonize" these two rules.** Both use 60 days from
+`EndDate`, and they mean inverted things because they act on different populations:
+
+| Population | No payout + end date **older** than 60d | No payout + end date **within** 60d |
+|---|---|---|
+| **Open** WO, auto-close candidate (Section 4b) | **flag** — never auto-close | silent skip — too recent to judge |
+| **Already-closed** WO, integrity sweep | **silent** — settled in practice | **flag** — recent enough to act on |
+
+Before closing, a missing payout is a reason to withhold the close. After closing, it is only actionable
+while the job is fresh. Anyone reconciling these into one rule will break one of them.
+
+## Choose a date anchor by what it cannot see
+
+When a rule keys on a date and several fields are candidates, the objection "any of these can be edited
+long after the work happened" is usually true of all of them and does not decide anything. **Settle it by
+measuring what each candidate is structurally blind to** — run the rule under each anchor and compare.
+
+An inaccurate anchor produces wrong rows you can see and dismiss. A *blind* anchor produces nothing, and
+looks exactly like clean data. That asymmetry is why this has to be measured rather than argued.
+
+Two decisions made this way:
+
+- **Close-date-vs-record-created mismatch.** Anchoring the review window on the opportunity's *close*
+  date caught real cases; anchoring on its *created* date caught **zero** — an opportunity created and
+  won in the same month has its work order created that month too, so it can never mismatch. The created
+  date anchor also permanently hides **re-won** opportunities, which is the population the rule actually
+  detects, since the close-date automation restamps the date on every re-win.
+- **The staleness ceiling above.** The end date beat the status-change-to-closed event: it is populated
+  on 100% of the closed book, needs no field-history query, and cannot be restarted by reopening and
+  re-closing a record. Field history also only reaches back a limited retention window, so it could not
+  gate the older book at all.
+
+**Always state the accepted blind spot as a number**, in the code and the process doc. For the ceiling
+above: 14.5% of work orders are already more than 60 days past their end date at the moment they close,
+so the test can never fire on them — accepted, because by the operating rule those jobs are settled.
+
+⚠️ **Don't over-apply a field's caveat.** An end date documented as "estimated — never use for timing
+metrics" is still fine for a 60-day staleness window: an estimate off by a week doesn't change that
+verdict. Match the precision of the field to the precision the test needs, rather than banning it outright.
+
+## Pin the historical backlog explicitly, don't let a rule quietly carry it
+
+A detection rule written against a live process will, on first run, surface the entire back catalogue.
+Decide deliberately whether that history is in scope — and if it isn't, **move the rule's floor forward
+rather than dismissing rows by hand each cycle.**
+
+Where correcting history would restate a closed accounting period, fixing it is the *wrong* action even
+when the rule is right: the recorded value is a faithful record of what the system did at the time.
+Set the floor at the start of the open period and keep the rule running forward, so a later automation
+touching an old record still resurfaces it — a floor on the *close* date preserves that visibility,
+whereas a floor on the record's creation date would blind the rule to old records being re-touched now.
