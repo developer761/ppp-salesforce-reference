@@ -1017,6 +1017,8 @@ _No custom fields._
 
 > Custom fields on `ServiceAppointment`. Package-namespaced fields listed separately at the bottom.
 
+> **⚠️ Two work-order links.** `ParentRecordId` (standard FSL parent) and `FSSK__FSK_Work_Order__c` (Field Service Starter Kit lookup) hold the same Id in practice but are **not interchangeable** — the `ServiceAppointment_CalendarEvent` flow reads the FSSK field. The rep's calendar Event, its `WhatId` (→ Opportunity, no Account fallback) and its `OwnerId` all resolve through `FSSK__` fields, and the flow does not fire at all unless `FSSK__FSK_Assigned_Service_Resource__c`, `SchedStartTime`, and `SchedEndTime` are all set. See `BUSINESS_RULES.md` → "Scheduling — Service Appointments and rep calendars".
+
 | API Name | Label | Data Type | Required | Description |
 |----------|-------|-----------|----------|-------------|
 | CancellationReason__c | Cancellation Reason | Picklist | No | — |

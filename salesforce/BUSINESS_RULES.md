@@ -117,6 +117,56 @@ Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) 
 - Customer-facing `Case.Type` values only (6): `Estimator No Show`, `Waiting for Estimate`, `Dissatisfied Customer`, `Balance Owed`, `Service Call`, `Other`. Other types are deprecated IT-internal.
 - Link a case to a rep via **`Case.Opportunity__r.OwnerId`** (covers both no-show and service-call cases).
 
+## Scheduling — Service Appointments and rep calendars
+
+The booking chain is **Lead → convert → Opportunity → WorkOrder → ServiceAppointment → AssignedResource → ServiceResource → User**. Service Appointments are parented to the **WorkOrder**, never directly to the Opportunity — FSL does not permit an SA→Opportunity link, so the work order exists purely to carry that relationship.
+
+Assignment is **territory-and-availability driven, not owner-driven**. The SA's Service Territory is derived from the job's zip code; eligible resources come from Service Territory membership, work type, and skills. Do not infer the assigned estimator from the Opportunity or Lead owner.
+
+### ⚠️ Field reps read an Event, not the FSL calendar
+
+Reps struggled with the native FSL calendar, so a standard **`Event` is replicated onto the rep's Salesforce calendar** by the active flow `ServiceAppointment_CalendarEvent` (record-triggered, after-save, create + update). That Event is the rep's entire mobile workflow: open app → Event → click through to the Opportunity.
+
+**Entry gate — all three must be non-null, or no Event is created at all:**
+
+```
+!ISNULL(FSSK__FSK_Assigned_Service_Resource__c) &&
+!ISNULL(SchedStartTime) &&
+!ISNULL(SchedEndTime)
+```
+
+An SA with no assigned service resource produces **no Event** — not a degraded one. The appointment is invisible to the rep.
+
+**Field sources:**
+
+```
+Event.WhatId  = FSSK__FSK_Work_Order__r.Opportunity__c
+Event.OwnerId = FSSK__FSK_Assigned_Service_Resource__r.RelatedRecordId
+```
+
+`Inquiry_Notes__c` and `Primary_Contact__c` are pulled through the same work-order path.
+
+**`WhatId` has no Account fallback.** It resolves *only* through WorkOrder → Opportunity. No work order means a null `WhatId` and an Event that links to nothing — there is no "navigate from the Account instead" path.
+
+Two Events are generated per booked SA: one owned by a **territory public calendar**, one owned by the **individual rep User**.
+
+### ⚠️ Field-name trap — ServiceAppointment carries two work-order links
+
+| Field | Type |
+|---|---|
+| `ParentRecordId` | Standard FSL polymorphic parent |
+| `FSSK__FSK_Work_Order__c` | Field Service **Starter Kit** custom lookup |
+
+They hold the same Id in practice but are **not interchangeable** — the calendar flow reads `FSSK__FSK_Work_Order__c`. An SA correctly parented via `ParentRecordId` alone still yields no usable calendar Event.
+
+For an externally created SA to produce a working rep calendar event it must populate `FSSK__FSK_Work_Order__c` (→ a WorkOrder with `Opportunity__c` set), `FSSK__FSK_Assigned_Service_Resource__c` (→ a ServiceResource with a `RelatedRecordId`), `SchedStartTime`, and `SchedEndTime`. Relevant when scoping any external system that writes Service Appointments.
+
+The Starter Kit namespace also appears on `User` as `FSSK__FSK_FSL_Resource_Type__c`.
+
+### Estimate work types
+
+Three distinct estimate work types with different durations — `Estimate Appointment` (1 hr), `Phone Estimate Appointment` (0.25 hr), `Partner Estimate Appointment` (1 hr). "Book an estimate" is not a single operation. Multiple FSL **scheduling policies** are configured; the same resource returns different availability depending on which policy runs.
+
 ## Geography / sales tax
 
 - Sales-tax rate is **`ServiceTerritory.TaxRate__c`** (geographic). There is no per-licensee/brand rate and no separate tax object.
@@ -137,6 +187,36 @@ Which corporate entity an Opportunity / WorkOrder belongs to is derived from its
 ## Brand
 
 - Colors: Orange `#EE662E`, Blue `#2BAAE1`, Green `#8DC442`, Navy `#172B4D` (primary text). Fonts: Roboto (body), Roboto Condensed (display/numbers).
+
+## Record ownership — you cannot assign to an inactive user
+
+Salesforce rejects any write that makes an **inactive** user the owner of a record:
+`operation performed with inactive user [005…] as owner of workOrder`. This has a practical consequence
+for data cleanup: where **both** sides of an owner mismatch are inactive (e.g. a WorkOrder and its
+Opportunity both owned by departed users), **neither direction can be written** — the mismatch is
+unfixable in place. Options are to assign an **active** owner to both sides, or to accept the mismatch.
+Temporarily reactivating a departed user works but leaves you with two inactive owners that merely match.
+
+A second, independent blocker returns `The new owner must have read permission`: the prospective owner's
+**profile or permission sets grant no read on the object**. This is *not* a portal/partner-licence limit —
+partner (`PowerPartner`) users own records routinely. Check the profile's `ObjectPermissions` for the
+object rather than assuming a licence-type restriction.
+
+⚠️ **Do not test either condition with a write on a live record.** Assigning an active owner succeeds and
+then **cannot be reverted**, because restoring the original inactive owner hits the first block. Check
+`User.IsActive` and `ObjectPermissions` first — both are queryable.
+
+## Field history — retention caps what is knowable
+
+Field history is retained on a **rolling ~18-month window**, so the horizon **moves forward over time**.
+Verified 2026-08-05: the earliest `OpportunityFieldHistory` row of any kind is **2025-02-04** — zero rows
+for 2023 or 2024. `WorkOrderHistory` has the same horizon. Not every field is tracked
+(`Opportunity.Amount` has no history at all).
+
+**The trap: absence of history is not evidence of no change.** For any record whose activity predates the
+horizon, "no edit recorded" means *unknowable*, not *unedited*. Before quoting any rate derived from
+history, **split the population into covered and uncovered**, quote the rate only over the covered set,
+and label any extension to the uncovered set as an inference.
 
 ## SOQL / CLI traps
 
