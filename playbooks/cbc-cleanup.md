@@ -250,17 +250,27 @@ attribution, so there is nothing first-party to preserve, and those still go to 
 | 2b | Second affiliate vendor creator, OR downstream WO evidence confirms that affiliate's relationship, OR SF LS = that affiliate's LS value (any creator) | SF LS=[affiliate LS], SF LM=Referral, SF LG=Other Marketing. **No ACD assigned** — this affiliate is intentionally excluded from cost/corp reporting. |
 | 3 | SF LS = Customer Referral + CC-created + no Referring Account | → Lead Review |
 | 3b | SF LS = Customer Referral + Referring Account linked (field-gen referral) | Pass through; update SF LM→Referral if blank, SF LG→Referral if blank |
+| 3c | Lead created by a known strategic-outreach creator + SF LS = Strategic Outreach | Keep SF LS = Strategic Outreach; SF LM→Organic, SF LG→Other Marketing. **Must be evaluated before rule 4** — see the ordering note below. |
 | 4 | SF LS = Field-Generated, OR **any** lead created by a field user | Force SF LS=Field-Generated (overwriting a back-filled marketing source), SF LM→Self-Generated, SF LG→Self-Generated. The ad-cost-detail lookup then re-points to that territory/month's **self-gen/repeat** record instead of the paid or organic one. |
 | 5 | SF LS in fixed-override sources (e.g. `chatgpt.com`) | Apply fixed SF LM/LG values for that source (e.g. chatgpt.com → LM=Referral, LG=AI) |
 | 6 | SF LS = Meta, OR lead created by known Meta creator | SF LM→CPC if blank, SF LG→Social if blank |
 | 7 | Lead created by known marketing creator + SF LS blank | → Lead Review |
 | 7 | Lead created by known marketing creator + SF LS = Meta | SF LM→CPC, SF LG→Social |
-| 7 | Lead created by known marketing creator + SF LS = Strategic Outreach | SF LM→Organic, SF LG→Other Marketing |
 | 8 | CC-created or API-created (reached here with no prior rule matching) | → Lead Review (always, even if SF LM/LG are filled) |
 | 9 | SF LS blank + no creator rule matched | → Lead Review |
 | 10 | ACD gap (no matching ACD found in SF for territory + month + type) | → Quality Review |
 | 11 | **Catch-all (runs after all rules):** any lead or opp still missing LS, LM, or LG after processing | → Lead Review with list of missing fields |
 | 11b | **Catch-all:** any lead or opp still missing ACD after processing | → Quality Review with list of missing ACD fields |
+
+**Ordering note — rule 3c must precede rule 4.** The set of field users is built by unioning a
+small hardcoded creator list with a live query for the field profile, and at least one
+strategic-outreach creator also carries that profile. Rule 4 fires on *any* lead created by a
+field user regardless of the existing source, so if 3c sits below it, rule 4 swallows every
+Strategic Outreach lead that creator enters and rewrites it to Field-Generated /
+Self-Generated. This is a real regression introduced when rule 4 dropped its "only if the source
+is blank" guard — the two changes are safe individually and harmful together. Any future rule
+that keys on *creator* rather than *source* has the same hazard: place it below every
+source-specific rule it could shadow.
 
 ---
 
