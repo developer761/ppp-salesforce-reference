@@ -359,6 +359,33 @@ management cycle, which Salesforce does not prevent), resolve the root user live
 pinning an Id, and warn loudly if the roll-up ever resolves to nobody — that is what a broken
 `ManagerId` looks like from the inside.
 
+### Keep one implementation of a graded threshold
+
+A threshold like this is consulted by every layer — the sweep, the field emails, the triage list and
+the auto-close gate. Implemented once per script it *will* drift, and **the copy that misses a change
+is the one gating production writes.** When four implementations were finally compared, three had
+been lowered to the current bar and the fourth — the auto-close exporter — was still enforcing the
+retired one, holding work orders back against a standard that no longer existed while the
+documentation promised triage and close used the same rule. Twelve records on a single day's
+candidate set; eleven were false flags, and one owner accounted for seven of them.
+
+Two things make consolidating it safe rather than risky:
+
+- **Diff old against new over the full historical population, not just today's candidates.** Doing
+  that over ~8,800 closed records surfaced a divergence nobody had ever decided: a *negative*
+  projected-day count passes a credibility test of the form `subtotal / projected <= cap` (a negative
+  ratio is below any cap), becomes the denominator, and then fails a later `denominator > 0` guard —
+  so those records escaped grading through an accidental interaction rather than a rule. Requiring a
+  positive projected count sends them to the fallback denominator instead. Guard ratio tests with an
+  explicit positivity check; a sign error hides inside any cap comparison.
+- **Size every divergence against production before choosing a behaviour.** Each edge case here
+  touched under 0.4% of records, which is what made picking one behaviour a refactor. Had one been
+  material it would have been a business decision instead, and belonged with the business.
+
+Then check the *direction*: here every divergence resolved toward grading records the copies had
+skipped, so consolidation could only surface more, never hide anything. A consolidation that would
+newly hide records needs the same scrutiny as a rule change, because that is what it is.
+
 ### Payout floor — gate the auto-close, not the record after it closes
 
 A work order can satisfy every close-out test and still not be finished being **paid out**. Because a
