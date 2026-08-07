@@ -189,7 +189,11 @@ After `--scores` re-scores live SF, each scored row (`BMCR_Status__c IN ('Dbl_Ch
 
 **Pass-through-retailer lines → `No_Paint`** via the No-Points path — this is the established reviewer standard, no special hook needed. The pass-through-retailer line earns nothing because the reward is submitted through the national wholesale account and lands on a **separate wholesale `Transaction__c`** (matched by invoice/Work-Order linkage, never by amount — the wholesale account is a wholesale channel). The credit is not lost; it's on the twin. See "Wholesale-account and pass-through-retailer transactions" below.
 
-**Held rows** go to a review tab in the scores workbook in the same column format as the `(scores)` tabs plus a `hold_reason` column, for a reviewer to copy into their review sheet (the pipeline holds only `drive.file` scope + xlsx upload, so it cannot write an existing external Google Sheet).
+**Held rows** go to a review tab in the scores workbook in the same column format as the `(scores)` tabs plus a `hold_reason` column, for a reviewer to copy into their review sheet.
+
+> **OAuth scope note (corrected 2026-08-07):** this step was originally documented as "copy by hand, because the pipeline holds only `drive.file` scope and cannot write an existing external Google Sheet." That constraint **no longer holds** — the pipeline's OAuth token now carries the broad `drive` scope plus `spreadsheets`, so writing an existing external Sheet directly is possible. The manual copy is now a convention, not a technical limit.
+>
+> ⚠️ **Related trap:** the broad `drive` scope is a strict superset of `drive.file`, but code that checks for the narrow scope with a literal substring test (`if "drive.file" not in token_scope: raise`) will **hard-fail on a token that is actually more privileged**. This blocked an entire monthly run at step 0. Fix the guard to accept either scope — do **not** re-consent back down to `drive.file`, which would drop the `spreadsheets`/`documents` scopes other tooling depends on.
 
 > ⚠️ **`sf data update bulk` line-ending gotcha:** on macOS the CLI can reject a payload with `JobFailedError: LineEnding is invalid on user data. Current LineEnding setting is LF` when the file's line endings don't match. Normalize the payload to LF and pass `--line-ending LF` explicitly. **Nothing is written on this failure** (safe), but any code calling `sf data update bulk` should set the flag rather than rely on the default.
 
