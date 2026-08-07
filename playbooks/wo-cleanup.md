@@ -225,17 +225,50 @@ Real (non-estimate) WOs where the job is fully complete should move to `Status =
 - `RequestReview__c` != null
 - `BalanceOwed__c` within ±$0.01 (`>= -0.01 AND <= 0.01`) — only the unavoidable tax-rounding penny left after balance adjustments; the target is `$0`. Larger balances fall through to the small-balance adjustment pass first, then close on the next run. (Was `= 0`, briefly ±$0.05.)
 - `Total_Undeposited_Payments__c` = 0 — the **amount** field; do not use the count field `UndepositedTransactions__c`
-- `LastPaymentIn__c` != null AND older than 7 days
+- **No transaction activity for more than 7 days** — see "Anchor the quiet-period gate on all activity" below
 - `TotalPayoutsForLabor__c` != 0
 - **Excludes:** opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (same exclusions as Section 3)
 
 ### Flag for manual review (meets all completion signals except one — do not close)
-- `LastPaymentIn__c` is null → "no last payment date" (should not normally occur)
+- No transaction of any kind on the record → should not normally occur on a complete, settled job
 - `TotalPayoutsForLabor__c` = 0 AND `EndDate` older than 60 days → labor would have requested payment by then
 
 ### Silent skip (not closed, not flagged — reconsider next run)
 - `TotalPayoutsForLabor__c` = 0 AND `EndDate` within 60 days → payout may simply be unrecorded
-- `LastPaymentIn__c` within the last 7 days → too recent
+- Transaction activity within the last 7 days → still settling, too recent
+
+### Anchor the quiet-period gate on all activity, not just customer payments
+
+The gate that holds a work order open until it has "gone quiet" must key on **every kind of
+transaction that means someone is still working the record** — materials purchases, customer payments
+in, and crew payouts — not on the last-customer-payment field alone.
+
+Measured over ~3,200 work orders closed in a year, activity landing *after* a work order became
+close-eligible broke down as **purchases 635, crew payouts 206, customer payments 9**. A gate anchored
+on the payment field was blind to 841 of those 850 events and watched the 9 that essentially never
+happen. Switching the anchor cut closes-landing-on-top-of-later-activity from **9.2% to 7.0%** — about
+70 fewer premature closes a year — at no cost in window length.
+
+⚠️ **Two traps when implementing this:**
+
+- **Identify transaction kinds by record type, not by payee type.** A null payee type covers *both*
+  purchases and customer payments in — they are different record types. Splitting on payee type alone
+  silently merges two populations.
+- **Exclude sales commission from the gate.** Commission payouts are ~99% *created after* the close
+  (median two weeks after), because closing is what triggers them. Including them in a
+  "quiet period" test means any reopened work order can never close again — the act of closing
+  generates the transaction that blocks the next close.
+
+**State the blind spot as a number:** purchases carry an entry-lag tail — roughly 14% are entered more
+than a week after the date they carry — so the gate cannot see those coming at any window length.
+Payouts and payments-in are entered same-day. Accepted, and documented rather than discovered later.
+
+**This gate tests recency, not completeness.** It does not replace the payout floor (which asks whether
+payouts are *proportionate* to job value). Both run; they answer different questions.
+
+⚠️ **Put the gate in one module and import it.** This logic existed in two scripts with the same
+constant and the same field, which is the drift failure mode described under "Scope exclusions are a
+design surface" — the copy you forget is the one that writes to production.
 
 ### Batching
 Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `allOrNone=false` — same governor-limit reasoning as Section 1.
@@ -308,6 +341,23 @@ holds back work orders that are genuinely closeable — this defect has appeared
 separate scripts (the auto-close exporter and the pre-flight checker), each time as a hard
 `LaborDaysActual__c != 0` filter with no owner scoping. Resolve the owner's team membership from the
 live manager chain and apply the test only to that set.
+
+**Scoping it is not only a relaxation — it also makes the gate bite.** Enforcing attendance as a
+`!= 0` filter in the *query* means an on-policy work order with nothing logged is never returned at
+all: it is invisible, not skipped. Move the test into classification and those records surface as
+flagged instead of vanishing, which is the enforcement the policy actually wants. Expect the change
+to move records in both directions and validate it that way — a read-only pass over one cycle,
+classifying every candidate under both the old and new rule and diffing by record, is enough.
+
+⚠️ **Put the roll-up in one module and import it — and check the copies before you consolidate.**
+Team membership is consulted by the sweep, the field emails, the auto-close exporter and the
+pre-flight. When these were finally compared, they did not agree: two walked the full manager chain
+while a third matched **direct reports only**, so an owner two levels down counted as on-team for one
+script and off-team for another. Nothing announced the divergence — both readings look correct in
+isolation. Resolve membership transitively (walk `ManagerId` to the root, guarding against a
+management cycle, which Salesforce does not prevent), resolve the root user live by name rather than
+pinning an Id, and warn loudly if the roll-up ever resolves to nobody — that is what a broken
+`ManagerId` looks like from the inside.
 
 ### Payout floor — gate the auto-close, not the record after it closes
 
