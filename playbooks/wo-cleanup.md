@@ -386,6 +386,39 @@ Then check the *direction*: here every divergence resolved toward grading record
 skipped, so consolidation could only surface more, never hide anything. A consolidation that would
 newly hide records needs the same scrutiny as a rule change, because that is what it is.
 
+### Before calling something a coverage gap, check whether the population is dormant or active
+
+When a broad rule engine replaces a set of hand-built report filters, the parity question is coverage:
+does the engine surface everything the reports do? Read the reports' rows directly rather than
+rebuilding their filters, and diff record by record.
+
+But a record the engine misses is not automatically a gap. A worked example: work orders sitting in an
+in-progress status with **no start and no end date** were invisible to the engine's close-out rule,
+because that rule keys on the end date existing. The reports caught them immediately; the engine would
+not look at them for three months. That reads like a blind spot covering dozens of live records.
+
+It wasn't. **Twenty of the twenty-one had a transaction within the last thirty days** — money moving,
+crews being paid, someone plainly working the job. And the shape that *would* be dangerous — the same
+status, no dates, aged past the fallback window, and **no transactions at all** — returned **zero
+records**. The state is transient by construction: when the job ends someone sets the end date, the
+close-out rule starts applying, and the gaps surface then. It only becomes permanent under
+abandonment, which shows up as an absence of transactions.
+
+So the engine was not failing to see those records; it was declining to nag about a job still in
+flight. The reports and the engine differed on **timing, not coverage** — one asks mid-job, the other
+asks at close.
+
+**The check worth running before you file a gap:**
+
+- Is the missing population *dormant or active*? Transaction recency is usually the cleanest test.
+- Is the state *transient or terminal*? If a normal downstream event (a date being filled, a status
+  advancing) pulls the record into an existing rule, the engine has a latency, not a hole.
+- Does the *terminal* version of the shape actually exist in the data? If it returns zero, the
+  fallback window is working rather than failing.
+
+If all three come back benign, what is left is a preference about when to ask — which belongs with the
+business, not in a rule change.
+
 ### Payout floor — gate the auto-close, not the record after it closes
 
 A work order can satisfy every close-out test and still not be finished being **paid out**. Because a
