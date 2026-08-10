@@ -319,6 +319,38 @@ Submission ID is **not** used as a standalone match key — the same submission 
 ### Vendor + Amount match path
 The vendor_amt path has a 1-day date window guard. A BMCR row is only matched via vendor+amount if `|BMCR invoice date − SF transaction date| ≤ 1 day`. This prevents cross-month false positives where the same vendor and amount appear in different periods.
 
+### Vendor aliases — when the same store trades under two names
+The fuzzy-vendor gate is deliberately tight (0.90) so it only forgives formatting differences. It cannot bridge a genuinely different trading name for the same store: one retailer's statement name scored **0.455** against its Salesforce account name — nowhere near the gate, and lowering the gate to reach it would let real mismatches through.
+
+Confirmed aliases therefore live in an explicit config (`config/vendor_aliases.yaml`), keyed statement-distributor → SF account name, and score 1.0. This unlocks every fuzzy-gated path at once (`amt_date_fuzzy`, `vendor_amt`, `ref_prefix`) without loosening the rule for any other vendor. An alias never matches anything on its own — amount and date still have to agree.
+
+Before adding one, check whether plain fuzzy already handles it: substring containment already scores 1.0, so many apparent aliases need no entry. A redundant alias is one more thing to keep true.
+
+### Repeat submissions of one invoice must not block matching
+The fuzzy paths require a *unique* candidate so a transaction can't bind to the wrong purchase. But when every candidate carries the **same invoice number**, there is only one purchase — the extra rows are the vendor re-submitting it, each with its own confirmation number. Refusing to match there protects nothing and strands real credit.
+
+Candidates sharing one invoice number are collapsed to a single best row — **Approved before Rejected, then the lowest confirmation number** (the original submission) — before the uniqueness check. Candidates that are genuinely different invoices still leave the tie in place and go unmatched, which is the correct conservative outcome.
+
+### Successful resubmissions hide behind the failed original
+When a submission is rejected and then resubmitted, the resubmission carries a **new invoice number and a new confirmation number** — nothing in the data links it to the original. Salesforce keeps the original's confirmation number, so confirmation-number matching (the first tier) binds the record to the *failed* row and short-circuits before any tier that could find the successful twin. The record then sits at error/0 points indefinitely while the statement shows the purchase was approved and paid.
+
+Detection keys on the only attributes the two rows share — **vendor + amount + invoice date** — and requires the candidate to be approved with points under **both a different confirmation number and a different invoice number**. Same confirmation number or same invoice number means an ordinary duplicate, which is a different case handled elsewhere.
+
+⚠️ **This flags for review; it must never rebind automatically.** Rebinding a record that already has a confirmation-number match would undermine the confirmation-first rule that prevents approved records being downgraded to rejected. Vendor+amount+date agreement is suggestive, not proof — a human confirms. Make the review note earn its keep: name the transaction and include a direct record link so the reviewer can act without hunting.
+
+**Expect this to be rare, and expect most near-misses to be correctly excluded.** On one month's data the funnel ran 2,554 records matched to a rejected/0-point row → 14 sharing an amount and date with an approved row → **1 genuine resubmission**. Of the 13 exclusions, 11 were same-invoice approved/rejected duplicate pairs and 2 were coincidental amount+date collisions between unrelated vendors. A statement-side scan that ignores those two distinctions will badly overstate the opportunity.
+
+### Truncated invoice stems (`ref_prefix` path) and the double-approval trap
+Some distributors' invoice numbers reach Salesforce truncated to a short stem — SF `ReferenceId__c` holds `ABC12` where the statement carries `ABC12-07291NM-S`. Exact reference matching misses these entirely, so they surface as unmatched statement rows that look like lost credit.
+
+The `ref_prefix` path handles them: if the SF reference is at least 5 characters and is a strict prefix of the statement invoice, it counts as a reference match — **gated on fuzzy vendor agreement, a ≤1-day invoice/transaction date gap, and a unique candidate.** All three guards are required; a bare 5-character stem is weak evidence on its own, and short numeric stems collide across years (a 5-digit stem routinely hits transactions from several years earlier).
+
+**The reason this path runs only after exact reference matching is the more important half.** When a distributor both emails receipts and runs an automatic invoice feed, the same purchase is submitted twice — once under the stem, once under the full invoice number. Because the rewards program de-duplicates on the invoice *string*, the two forms read as different purchases and **both are approved at full points.** Running exact-first means the SF record binds to whichever form matches exactly, leaving the other form unmatched and available to be recognised as a duplicate rather than double-counted.
+
+Unmatched statement rows are then checked against the approved-invoice keys for a truncated-stem twin: if an already-credited invoice is a strict prefix of this row's invoice under a *different* confirmation number, the row routes to **No Action Needed** with a note naming the transaction and confirmation number that already hold the credit.
+
+⚠️ **Every such pair is logged at WARNING with its point value.** A purchase approved twice is an over-credit the program may later reverse, so it must never be silently absorbed into "No Action" — the routing keeps the review pile honest, and the log is what surfaces the exposure for a human decision. Raise the pairs with the rewards contact, and check whether the duplicate submissions can be stopped at the source.
+
 ---
 
 ## Slack notification
