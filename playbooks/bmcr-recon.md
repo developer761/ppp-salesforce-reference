@@ -319,6 +319,32 @@ Submission ID is **not** used as a standalone match key — the same submission 
 ### Vendor + Amount match path
 The vendor_amt path has a 1-day date window guard. A BMCR row is only matched via vendor+amount if `|BMCR invoice date − SF transaction date| ≤ 1 day`. This prevents cross-month false positives where the same vendor and amount appear in different periods.
 
+### Make transaction references clickable on the review tabs
+Reviewers open records constantly, and every transaction name on a review tab is otherwise a copy-paste-into-search round trip. Hyperlink them — including names that appear **inside note text**, not just the dedicated name column. Scope it to the review tabs; links on the bulk data tabs are noise.
+
+A spreadsheet formula is the wrong tool here for two reasons: notes reference a transaction mid-sentence, so the link must attach to a substring rather than the whole cell; and the review tab is a live working surface carrying the reviewer's own highlighting, so replacing values or writing whole-cell formatting would destroy their work. Use rich-text runs with a field mask naming **only** the text-run field — values, fills, borders and number formats then survive untouched. Verify that on a copy before touching the real sheet.
+
+⚠️ **Two API behaviours will silently cost you links:**
+- A text run starting at the very end of a string is rejected outright. A transaction name is very often the last thing in a note, so only emit a closing run when text actually follows.
+- A run spanning an entire cell is **silently collapsed** — cells containing nothing but a transaction name come back unlinked with no error at all. Those need a cell-level text-format link instead, with the mask scoped to just the link and its styling.
+
+The second failure returns a successful API response, so **verify by re-reading the sheet and counting links, not by trusting the write call**. A stronger check is to assert that each link's visible text matches the name of the record its URL targets — that catches misdirected links as well as missing ones.
+
+Style links explicitly (underline and colour). A run-level link renders identically to surrounding text, so without styling the reviewer cannot tell what is clickable. Resolve record ids in bulk, since a record URL needs the id and the sheet carries only the name.
+
+Finally: coordinates are read and written moments apart, so do not run this while someone is actively restructuring the sheet — a row moved in between lands a link on the wrong cell. Re-running is idempotent and repairs any drift.
+
+### Refresh the review pile before anyone sleuths it
+The monthly run reads Salesforce once and freezes that answer into the packet. Salesforce then keeps moving: wholesale-account credit posts days to weeks after the purchase, and receipts are entered continuously. Reviews typically happen several days after the run, so part of the review pile is already stale before a human opens it.
+
+Add a **refresh step between the run and the manual review**: re-check every row still on the manual-research pile against live Salesforce, move anything that has since resolved to No Action, and report exactly which rows can be cleared. Read-only against Salesforce.
+
+**Ordering is the entire point.** Doing this at write time would be too late — by then the sleuthing has already happened, and avoided sleuthing is the cost the step exists to remove. The sequence is: run → **refresh** → manual sleuthing → apply → scoring. The write step should *warn* when no refresh was recorded rather than block, since the reviewed packet is still valid; the cost of skipping was already paid in wasted effort.
+
+**This is measurable, not theoretical.** On one run, the pipeline finished at `15:56:48Z` and two wholesale transactions covering review rows were created at `17:10:12Z` and `17:14:03Z` — about 75 minutes later. Three days on, four review rows worth 300 points had resolved themselves and were found only by a manual Salesforce search.
+
+Two implementation notes: do **not** seed the wholesale-lookup cache when refreshing — a cached miss is precisely the stale answer being overturned. And rewrite the working classified file in place (keeping the pre-refresh copy) so later steps read current truth rather than the frozen snapshot.
+
 ### Vendor aliases — when the same store trades under two names
 The fuzzy-vendor gate is deliberately tight (0.90) so it only forgives formatting differences. It cannot bridge a genuinely different trading name for the same store: one retailer's statement name scored **0.455** against its Salesforce account name — nowhere near the gate, and lowering the gate to reach it would let real mismatches through.
 
