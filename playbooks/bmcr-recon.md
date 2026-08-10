@@ -334,6 +334,27 @@ Style links explicitly (underline and colour). A run-level link renders identica
 
 Finally: coordinates are read and written moments apart, so do not run this while someone is actively restructuring the sheet — a row moved in between lands a link on the wrong cell. Re-running is idempotent and repairs any drift.
 
+### A write guard keyed to a pre-run snapshot silently drops rows the snapshot never had
+The write step compares each record against a snapshot taken before the run and skips anything that changed since — sound protection against double-applying. But the source query is filtered (here, positive amounts only), so credits and returns are **never in the snapshot**, and the reconciliation's own research step finds them later by reference.
+
+For those rows the guard defaulted the baseline to blank, which made any populated live value look like an edit. **They were skipped on every run, silently** — no error, just a quietly smaller write count than the approved count.
+
+Two lessons worth carrying to any snapshot-based guard:
+
+- **Absent from the baseline is not the same as blank.** Handle "no baseline" as its own case rather than letting empty-string comparison decide it.
+- **The review packet is itself a valid baseline.** It records the values observed when the row was built, so "does live still match the packet?" preserves the guard's real question — has someone edited this since we looked? — for rows the snapshot cannot cover.
+
+Also compare numerically where the two sources render differently (`0` vs `0.00`), or format drift alone will cause false skips. And reconcile **approved count vs submitted count** after every write: a silent gap between them is the only symptom this failure produces.
+
+### Reading line items from PDFs: extraction order is not row order
+Invoice scoring depends on pulling SKUs and quantities off a PDF, and most point-of-sale templates extract row-major — one text line per line item — so a per-line pattern works. Some do not: they extract **column-major** (every SKU, then every description, then every price), and the grouping can be **inconsistent between invoices from the same store**. Three different shapes appeared across thirteen invoices from two stores, plus a varying header-label count and one template printing a column *after* the footer text.
+
+Parse by **token shape and order** rather than fixed offsets: find one unambiguous block to establish the item count, then classify the rest by shape (money-like, unit words, percent-suffixed, identifier-shaped) reading in order.
+
+⚠️ **Make the arithmetic reconciliation mandatory.** Quantity × unit price must equal the invoice's own extension column, or return nothing. An early version applied that check only when extensions happened to be present and, on a template where they were not, **silently returned unvalidated line items**. A mis-paired SKU and quantity does not raise an error — it produces a confident wrong score, which is worse than reporting nothing, because "could not read" is a state the downstream disposition already handles.
+
+Two framing notes. Detect by **layout family, not brand** — many stores share one POS template, so new stores are then a one-line addition. And calibrate the payoff first: this work unblocked ten rows and recovered **zero points**, because unparsed invoices are often unparsed precisely because they are low-value. The gain was turning undecidable rows into decidable ones.
+
 ### Refresh the review pile before anyone sleuths it
 The monthly run reads Salesforce once and freezes that answer into the packet. Salesforce then keeps moving: wholesale-account credit posts days to weeks after the purchase, and receipts are entered continuously. Reviews typically happen several days after the run, so part of the review pile is already stale before a human opens it.
 
