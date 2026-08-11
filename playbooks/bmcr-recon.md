@@ -376,6 +376,33 @@ review tabs consisted entirely of statement-side rows with **no SF transaction b
 them** — nothing to write, nothing to hold. Check for a record id before treating a review
 count as a hold count; the real hold set was a fraction of the apparent one.
 
+### Treat it as a first-class value, not an add-on
+
+A new value only behaves predictably if it passes through **every** stage the existing
+values do. Worth checking each one explicitly rather than assuming, because several are
+easy to miss and fail silently:
+
+| Stage | What it needs |
+|---|---|
+| SOQL pull | the field in the select list — which also puts it in the pre-run snapshot the revert and write-guard depend on |
+| Match / carry | on both the main matched row and any synthetic rows built by the research phase |
+| Comparison | its own comparison column, alongside the status/dollar/points ones |
+| Proposed write | a `*NEW` column registered in the writeback field map |
+| Reviewer notes | a note when the value changes, at parity with the others — otherwise a reviewer reading the notes column cannot see it moved |
+| Packet | its columns on every tab, in a block shaped like the existing value blocks |
+| Post-upload check | the verifier's field list, or a write cannot be confirmed to have landed |
+| Revert | usually automatic if the revert derives from the writeback map — confirm rather than assume |
+| Refresh / run summary | reported beside the existing totals |
+
+**Placement carries meaning.** Put the block where its priority says it belongs — here,
+immediately after the status columns and *before* the dollar columns, because the volume
+figure is what the manufacturer measures on and the money columns are downstream of it.
+Mirror the existing block shape (source value, statement value, comparison, proposed
+write) so it scans the same way.
+
+**Number format: prefer automatic over an explicit decimal pattern.** A literal decimal
+point in a spreadsheet pattern prints a whole number as `20.`
+
 ### Keep the backfill out of the reconciliation review
 
 Month one stages a year of history at once — roughly seven times a normal month's write
