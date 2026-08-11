@@ -43,6 +43,7 @@ This repository is publicly visible on the internet. Everything committed here c
 - **`software-audit.md`** — monthly software license audit: platform cross-reference, Checkover field triage, cost consistency check, allocation monthly audit (reference).
 - **`bmcr-recon.md`** — BM Contractor Rewards monthly reconciliation: SF object/fields, picklist gotchas, auto-update rules, match paths, revert procedure, edge cases. Also covers **capturing gallons awarded** (why volume beats points as the reconciliation basis, the 1/16-increment precision trap, holding writes for rows under review) and the SKU-normalization collision that invents matches.
 - **`wo-cleanup.md`** — bi-weekly WO cleanup: estimate appointment violations, small balance adjustments, Opp/WO status alignment. Covers governor limit batching, `Internal_Adjustments__c` formula direction, 3-step quote sequence for Opp stage changes, ST zip validation workaround.
+- **`cbc-cleanup.md`** — lead-attribution clean-up: the LeadSource / Lead Medium / Lead Group decision chain (WC-match tiers and no-match rules), creator-vs-source branch ordering, source canonicalization, ad-cost-detail allocation, and the pre-upload QA step.
 
 ### `estimating/` — estimating logic for PPP tools
 - **`paint-gallons-calculator.md`** — standard "gallons needed" logic for the paint-order calculator: ceiling/walls/trim formulas, door/window/closet allowances, coverage rate, 10% buffer, job-level roll-up by color/finish, and 5-gal-bucket packaging.
