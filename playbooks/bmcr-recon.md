@@ -27,7 +27,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
    - Amount + Date + fuzzy Vendor (**gated at ≥90% string similarity**; score shown in review)
    - Vendor + Amount (1-day date guard)
    - Submission ID + Amount (last resort — unique amount only)
-5. Routes each row to *reconcile* or *review* (see "Reconciliation decision tree"), then classifies the reconcile rows through the decision-rule tree
+5. Routes each row to *reconcile* or *review* (see "Reconciliation decision tree"), then classifies the reconcile rows through the decision-rule tree. Captures the statement's **gallons awarded** on every matched row (see "Capturing gallons awarded")
 6. Phase 3a: searches the receipts inbox for manual_research rows by invoice number
 7. Phase 3b: processes unmatched BMCR rows — pass-through-retailer / national-wholesale rows use SOSL document lookup (identifies both the wholesale tx and the matching pass-through-retailer tx); all other vendors use SOQL (full vendor name, exact amount, date ±1 day); prior-month carry-forwards annotated NTA
 8. Invokes the PDF scorer for Dbl_Check rows
@@ -53,8 +53,14 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 | BMCR Status | `BMCR_Status__c` |
 | BMCR Dollar Amount | `BMCR_DollarAmount__c` |
 | BMCR Points Earned | `BMCR_PointsEarned__c` |
+| BMCR Gallons Awarded | `BMCR_Gallons_Awarded__c` |
 | BMCR Date Submitted | `BMCR_DateSubmitted__c` |
 | BMCR Notes | `BMCR_Notes__c` |
+
+> ⚠️ **`BMCR_Gallons_Awarded__c` must be scale ≥ 4** (it was widened from `Number(10,0)`
+> to `Number(14,4)`). The manufacturer awards in **1/16 increments** — quarts, pints and
+> half-pints — so an integer field silently rounds ~13% of rows and turns everything
+> below 0.5 into a hard zero. See "Capturing gallons awarded" below.
 
 ### BMCR_Status__c picklist values (SF API names — exact casing required)
 
@@ -150,6 +156,7 @@ Configured in `config/decision_rules.yaml`.
 | `python3 bmcr_recon.py --sf-csv path.csv` | Skip SOQL pull, use local SF export CSV |
 | `python3 bmcr_recon.py --dry-run` | Produce the packet without Slack posts (the run never writes to SF regardless) |
 | `python3 bmcr_recon.py --apply reviewed.xlsx` | **Audit gate:** write ONLY the Approve==yes rows from a reviewed packet's "Proposed Writes" tab (state-change safety). Add `--dry-run` to build the payload without writing |
+| `python3 bmcr_recon.py --apply-gallons reviewed.xlsx` | Write ONLY the Approve==yes rows from the packet's "Gallons Backfill" tab. Hard-scoped to the gallons field; same state-change safety. `--dry-run` supported |
 | `python3 bmcr_recon.py --force` | Bypass already-ran-this-month guard |
 | `python3 bmcr_recon.py --revert YYYY-MM-DD --reason "…"` | Restore SF for that run (reason required) |
 | `python3 bmcr_recon.py --write-supplemental path.csv` | Apply a supplemental write CSV with state-change safety check |
@@ -213,8 +220,9 @@ Review packet tabs:
 1. **Proposed Writes** — reconcile rows staged for SF, with an **Approve** column (default `yes`), sortable by change-category. `--apply` writes only Approve==yes rows.
 2. **Review – Actionable** — surfaced rows needing a human decision (potential drops, recent rejection matches, not-found)
 3. **Review – Low Priority** — high-volume, low-value surfacing (old orphans, no-paint/no-receipt, "will show next statement")
-4. **All Transactions** — full view with all classifications
-5. Plus legacy tabs (Carey Review, Uploaded Changes, Needs Manual Research) for continuity
+4. **Gallons Backfill** — the awarded-gallons capture batch, with its own Approve column; applied by `--apply-gallons`, separate from the reconciliation writes
+5. **All Transactions** — full view with all classifications
+6. Plus legacy tabs (reviewer tab, Uploaded Changes, Needs Manual Research) for continuity
 
 Each audit-gate tab also carries **Match Tier**, **Fuzzy %**, and **Stmt Row** provenance columns.
 
@@ -291,6 +299,96 @@ Script auto-derives the prior month from the current filename and downloads both
 
 ---
 
+## Capturing gallons awarded
+
+The rewards programme reports a **gallons awarded** figure per statement line, and that —
+not points — is the number the manufacturer measures the contractor on. Points exist only
+inside the rewards programme, and the dollar-amount-awarded column carries tax so it never
+ties back to a receipt total. Gallons compares like for like.
+
+The reconciliation therefore captures gallons onto the transaction, and a later phase will
+compare it against what the invoice says *should* have been awarded.
+
+**The eligibility sheet already supports both halves.** Every SKU on it carries a gallon
+equivalent alongside its points value — and notably, **a large minority of SKUs carry a
+gallon equivalent but zero points**. Reconciling on points is structurally blind to that
+volume, which is the substantive argument for the change, not just a preference.
+
+### A new statement column has no history behind it
+
+The first statement to carry the column is the first month of a *feed*, not a backlog.
+Prior statements have no such column at all, so replaying them yields nothing — there is
+no historical backfill available, and expecting one wastes a cycle. Coverage grows forward
+one statement at a time.
+
+Two consequences worth planning around:
+
+- **Coverage is capped by the statement window**, which is rolling ~365 days. Transactions
+  older than that will never receive a value.
+- **Inside the window, expect well short of 100%.** On the first month, roughly a third of
+  matched rows had the field left blank by the manufacturer. That is their ceiling, not a
+  matching failure — but confirm with the programme contact whether blank means "zero
+  eligible" or "not yet computed", because that decides whether the metric can carry
+  volume reporting at all.
+
+### Precision: never int-coerce a quantity you did not define
+
+Awards come in **1/16 increments**. Any int coercion — in the SF field, in the row builder,
+or in the spreadsheet writer's numeric-cast set — silently rounds, and values below 0.5
+become a hard zero with no error. Points is an integer field and gallons sits next to it in
+every one of those code paths, so the int treatment is very easy to inherit by accident.
+
+Equally: **a blank statement value must stay blank, never 0.** Blank means the manufacturer
+reported nothing for that row; zero is a positive claim they did not make. On the first
+month roughly a third of statement rows were blank, so this distinction covers a large
+slice of the data.
+
+### Mirror the statement; don't reconcile against it here
+
+Gallons has no "reduction → review" branch, unlike points and dollars. It is the fact of
+record rather than a negotiated credit, so the statement always wins — including on a
+decrease. Disputes belong to the invoice-scoring phase, which compares *invoice vs
+statement*; comparing *SF vs statement* here would only be re-litigating what the
+manufacturer already told us.
+
+### Capture before routing, but hold the write for rows under review
+
+Compute the value **before** the classifier's early-exit rules, because a row can be under
+review for a points dispute — or suppressed by a disregard token — and still have an
+undisputed gallons figure that the review tab needs to display.
+
+Then clear the staged *write* for anything sitting on a human review pile, so reviewers
+confirm the number rather than finding the record pre-filled underneath an open review.
+Two mechanisms are needed, because the two review surfaces differ:
+
+- **By route** — the packet's own review tabs. Automatic, no maintenance.
+- **By explicit id list** — the separate scoring workbook, whose open/closed state the
+  pipeline cannot infer because the scorer decides it after the run. Re-cut this list each
+  month; do not let it accumulate.
+
+⚠️ **Cut the hold list from the live review sheet, not from a recompute.** The two diverge
+as soon as any matcher change ships mid-cycle or a reviewer vetoes a row by hand — neither
+is reproducible from code. A recompute silently missed rows that a human had already
+pulled onto the review pile.
+
+⚠️ **Most "rows under review" may not be writable at all.** On the first month, two of the
+review tabs consisted entirely of statement-side rows with **no SF transaction behind
+them** — nothing to write, nothing to hold. Check for a record id before treating a review
+count as a hold count; the real hold set was a fraction of the apparent one.
+
+### Keep the backfill out of the reconciliation review
+
+Month one stages a year of history at once — roughly seven times a normal month's write
+volume. Put it in its **own gate tab with its own apply command**, and exclude the rows
+that already ride the normal payload so nothing is written twice. From month two the same
+rows compare equal and stage nothing, leaving a small monthly trickle.
+
+⚠️ **Scope the backfill apply to the one field.** Reusing the full writeback map means the
+gate tab inherits every other `*NEW` column that happens to be populated on those rows —
+and those rows were routed *away* from the normal write precisely because nobody approved
+them. This was caught staging confirmation-number writes onto rows the classifier had
+settled as no-change.
+
 ## Known edge cases
 
 ### Wholesale-account and pass-through-retailer transactions (Phase 3b)
@@ -310,8 +408,8 @@ Additional notes:
 ### Excluded non-BM retailer
 `VendorBMRetailer__c = false` on this retailer's SF vendor record → excluded from SOQL pull entirely. BMCR rows for it will always appear unmatched. If the SF transaction is otherwise correct and Approved, no action needed.
 
-### Customer charges receipts (Ring's End type)
-If a receipt in the receipts inbox is labeled "customer charges," do **not** create a `Transaction__c` in SF. Customer charge invoices are not tracked in SF. Receipt is sufficient documentation.
+### Customer-charge receipts
+Some retailers issue a separate "customer charges" invoice type. If a receipt in the receipts inbox is labeled that way, do **not** create a `Transaction__c` in SF. Customer charge invoices are not tracked in SF. Receipt is sufficient documentation.
 
 ### Submission ID
 Submission ID is **not** used as a standalone match key — the same submission ID can appear on multiple invoices (batch submissions). The sub+amt path uses it only when paired with a unique amount.
@@ -346,6 +444,73 @@ Two lessons worth carrying to any snapshot-based guard:
 
 Also compare numerically where the two sources render differently (`0` vs `0.00`), or format drift alone will cause false skips. And reconcile **approved count vs submitted count** after every write: a silent gap between them is the only symptom this failure produces.
 
+### SKU normalization can invent matches — punctuation is sometimes meaningful
+
+Vendor SKUs are matched to the eligibility sheet by stripping every non-alphanumeric
+character, so the matcher forgives formatting differences (`T5351X005` for `T5351X-005`).
+But a large part of the manufacturer's catalogue is numbered `NNN.NN.N`, and stripping
+those dots turns such a SKU into an ordinary 5-digit string — which is exactly what a
+store's own internal SKUs look like.
+
+The result is a **silent false positive**: a drywall joint-compound line and a paint-roller
+line each collided with a real coating SKU and scored full points. Both are sundries the
+eligibility sheet deliberately excludes, so every point they earned was invented. This was
+logged as a one-off for months; it was not. It reached 11 transactions and 470 points in a
+single month.
+
+**Guard:** when the matched catalogue SKU contains dots and the vendor's does not, require
+a **distinctive** word from the catalogue product name to appear in the invoice line's
+description. Distinctive means rare across the catalogue — compute document frequency over
+all product names and treat anything under ~5% as identifying. "GALLON" and "WHITE" prove
+nothing; a product-line name does. Where a product name has no distinctive words, let it
+pass rather than blocking on absent evidence.
+
+Two blunter fixes are tempting and both are wrong:
+
+- **Excluding dot-formatted catalogue SKUs** blinds the scorer to over a third of the
+  catalogue.
+- **Requiring the vendor SKU to carry dots too** kills the genuine matches from vendors who
+  *do* write them.
+
+**How to know the guard is right rather than merely plausible:** after the fix, every
+affected transaction reconciled to the manufacturer's credited figure *exactly*. An
+approximately-correct rule does not land on their number to the point. Before the fix, the
+inflated scores had produced apparent under-credit disputes worth raising with the
+manufacturer — the largest of which was entirely phantom.
+
+⚠️ **Fix this before reconciling on gallons.** An overstated "what we should have been
+awarded" turns directly into a false dispute raised with the manufacturer, which costs
+credibility in a way an internal miscount does not.
+
+Pin it with a test that runs against the **real** eligibility sheet and asserts the
+catalogue still contains dot-formatted SKUs — so it fails loudly if the numbering scheme
+changes, rather than passing vacuously.
+
+### Writing numbers into an existing spreadsheet column
+
+Two traps, both of which return a **successful API response** while producing wrong cells.
+
+**Appending a column inherits the formatting of the column to its left.** If that neighbour
+is a date column, the new column arrives date-formatted, and a values-API write with
+user-entered parsing reads every number as a date serial — 19 becomes `1900-01-19`, 1
+becomes `1899-12-31`.
+
+**Clearing the number format does not reliably fix it.** After emptying the column,
+verifying it empty, and clearing the format over its full depth, cells still came back as
+dates on rewrite: the value parse and the cell format resolve together.
+
+**Use the cell-update API with an explicit numeric value** rather than the values API. That
+writes a true number with no parsing and no format dependency; clear the number format in
+the same request so display falls back to automatic.
+
+Also **do not set an explicit `0.####` pattern** to show optional decimals — the decimal
+point in a spreadsheet pattern is literal, so a whole number renders as `20.`. Automatic
+formatting renders `20` as `20` and `0.0625` as `0.0625`.
+
+As with hyperlinking, **verify by reading the sheet back and cross-checking values against
+the source**, never by trusting the write call. Reading back is the only thing that caught
+either trap here.
+
 ### Reading line items from PDFs: extraction order is not row order
 Invoice scoring depends on pulling SKUs and quantities off a PDF, and most point-of-sale templates extract row-major — one text line per line item — so a per-line pattern works. Some do not: they extract **column-major** (every SKU, then every description, then every price), and the grouping can be **inconsistent between invoices from the same store**. Three different shapes appeared across thirteen invoices from two stores, plus a varying header-label count and one template printing a column *after* the footer text.
 
@@ -360,7 +525,10 @@ The monthly run reads Salesforce once and freezes that answer into the packet. S
 
 Add a **refresh step between the run and the manual review**: re-check every row still on the manual-research pile against live Salesforce, move anything that has since resolved to No Action, and report exactly which rows can be cleared. Read-only against Salesforce.
 
-**Ordering is the entire point.** Doing this at write time would be too late — by then the sleuthing has already happened, and avoided sleuthing is the cost the step exists to remove. The sequence is: run → **refresh** → manual sleuthing → apply → scoring. The write step should *warn* when no refresh was recorded rather than block, since the reviewed packet is still valid; the cost of skipping was already paid in wasted effort.
+**Ordering is the entire point.** Doing this at write time would be too late — by then the sleuthing has already happened, and avoided sleuthing is the cost the step exists to remove. The sequence is: run → **refresh** → manual sleuthing → apply → scoring → **gallons apply**. The write step should *warn* when no refresh was recorded rather than block, since the reviewed packet is still valid; the cost of skipping was already paid in wasted effort.
+
+The gallons apply comes last because its hold list covers rows still open on the *scoring*
+workbook, so it can only be cut accurately once scoring has run.
 
 **This is measurable, not theoretical.** On one run, the pipeline finished at `15:56:48Z` and two wholesale transactions covering review rows were created at `17:10:12Z` and `17:14:03Z` — about 75 minutes later. Three days on, four review rows worth 300 points had resolved themselves and were found only by a manual Salesforce search.
 
