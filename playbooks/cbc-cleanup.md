@@ -193,6 +193,20 @@ WC match is suppressed entirely (treated as no-match) for:
   > are evaluated before the field rule.
 - Leads where **downstream work order evidence** confirms a vendor relationship on the converted opportunity (crew attendance or Payment Out transaction) — these are detected via a startup query even when the login on the record is not a designated vendor team account; WC is suppressed and vendor values are applied. This detection runs for each configured affiliate vendor (currently two: WU and a second affiliate).
 
+  > **Gate each vendor's detection behind its own switch rather than deleting it.** Whether this
+  > detection is wanted is a business call, not a technical one, and it can be reversed by the
+  > people who own the vendor relationship. One of the two configured vendors has had its
+  > detection switched **off** by operational ruling while the other stays on — so the switch is
+  > per-vendor, defaulted in code, and the retired branch is left intact behind it. Deleting the
+  > branch instead would mean rebuilding it from scratch on reversal, and would silently drop the
+  > accompanying attribution corrections along with the review flag.
+  >
+  > Note what a switch like this takes down with it. The same detection flag usually drives more
+  > than the review queue — here it also forces the vendor `LeadSource`/medium/group, routes to the
+  > vendor ACD, and suppresses the WhatConverts match. Turning it off returns those leads to
+  > ordinary WC attribution, which **moves reported channel numbers**; it is not a review-noise
+  > change. Confirm the requester means the attribution too, not just the follow-up flag.
+
   > **Key the detection on the opportunity OWNER, not the creator.** Reassignment is an
   > ownership action, and coordinators routinely create the lead on the vendor principal's
   > behalf — so creator-only detection goes blind exactly where the vendor principal did not
@@ -220,7 +234,7 @@ Matching itself: normalize phone to 10-digit (strip +1 and non-digits), match by
 | 1 (exception) | SF LS = Previous Customer + CC-created + WC LS = `(direct)` | Apply Repeat fills (same as Tier 2); no review flag |
 | 2 | SF LS = Previous Customer + non-CC | Fill SF LM→Repeat if blank, SF LG→Repeat if blank; do NOT auto-update from WC |
 | 3 | CC-created + SF LS blank, OR CC-created + SF LS=Google with no SF LM/LG | Accept WC LS/LM/LG values |
-| 4 | WC LS = GMB and (SF LS is GMB, OR SF LS is blank) | Set SF LS=GMB, SF LM=Organic, SF LG=GMB |
+| 4 | WC LS is GMB **or a location name** (normalized — see below) AND WC LM = organic, and (SF LS is GMB-ish, OR SF LS is blank) | Set SF LS=GMB, SF LM=Organic, SF LG=GMB |
 | 5 | SF LS is blank (non-CC, non-field-user — field-created leads have WC match blocked upstream and never reach any tier) | Set SF LS/LM/LG from WC |
 | 5b | SF LS == WC LS AND (SF LM is blank OR SF LM == WC LM) | Update SF LM/LG from WC |
 | 5b (conflict) | SF LS == WC LS but SF LM ≠ WC LM (both populated) | → Lead Review for medium conflict |
@@ -298,18 +312,46 @@ WC_SOURCE_CANONICAL = {
     'home advisor': 'Home Advisor', 'ha ppl': 'HA PPL',
     'vehicle wrap': 'Vehicle Wrap', 'vehiclewrap': 'Vehicle Wrap',
     # chatgpt.com passes through unchanged; LG=AI is set via fixed-override, not LS
-    # Territory-named GMB: WC sends geographic names without 'GMB' in the string,
-    # so the 'gmb' substring check misses them — hardcoded here:
-    'dallas': 'GMB', 'dallas collin': 'GMB', 'dallas denton': 'GMB',
-    'hudson essex': 'GMB', 'long island': 'GMB',
-    'los_angeles': 'GMB', 'manhattan_north': 'GMB', 'miami': 'GMB',
-    'middlesex_monmouth': 'GMB', 'orlando': 'GMB', 'queens': 'GMB',
-    'san_diego': 'GMB', 'suffolk southwest': 'GMB', 'union middlesex': 'GMB',
-    'bocaraton': 'GMB', 'garden-city': 'GMB',
 }
 ```
 
-GMB detection also uses: `'gmb' in source.lower()` to catch territory-prefixed names like "Miami GMB" or "Bergen GMB".
+### Location-named GMB sources — normalize, don't enumerate
+
+A Google Business Profile listing reaches the call-tracking platform under the **listing's location
+name**, not as "GMB". The same listing arrives under four spellings — `San Diego`, `San_Diego`,
+`san-diego`, `gmb-san-diego` — and both lookup tables (the canonical-source dict and the
+`System_Setting__mdt` Lead-Group keys) are **exact-match**, so a table entry written with an
+underscore silently misses the space form and vice versa.
+
+**Normalize both sides before comparing:** lowercase → collapse every run of `_`, `-` and
+whitespace to a single space → strip a leading `gmb ` or trailing ` gmb` → trim.
+
+The rule, in full:
+
+> **location name (or `gmb` anywhere in the source) AND medium = organic → `GMB` / `Organic` / `GMB`**
+
+The Lead **Source** becomes `GMB` — not the location name. Every listing is the same channel; the
+location is how the lead arrived, not what sourced it.
+
+**Enforce the organic gate.** Measured across all GMB leads in production, 4,289 of 4,295 are
+organic (the remainder are one each of `cpl` / `email` / `referral` plus three blanks). Gating on
+organic therefore costs nothing and stops a paid medium being overwritten by the location rule. A
+location source arriving with a non-organic medium should be **flagged**, not auto-applied.
+
+**Flag unrecognized organic sources rather than dropping them.** The location roster cannot be
+derived from Service Territory — many listings are finer-grained than a territory — so it has to be
+maintained as listings are added. When the medium is organic and the source is neither a known
+marketing channel nor a website domain, it is most likely a new listing: route it to review. Without
+this catch-all, a new listing lands with a **blank Lead Group** and is invisible; that omission
+produced a backlog of ~100 leads with a location source, organic medium and no Lead Group at all.
+
+⚠️ **Use one shared GMB test everywhere.** The detection previously existed in three variants — a
+substring check, a canonical-dict lookup, and a combination — and the *narrowest* one drove the
+review flag. Because the open-items ledger increments a rule only when that flag fires, the defect
+suppressed the evidence of its own recurrence: the item read "not seen in 4 runs — confirm before
+closing" while it was still firing. **A detector narrower than the decision it reports on will
+always under-count itself**, and a staleness signal computed from it is not independent
+confirmation.
 
 The same canonicalization is applied to the **SF LS value** when comparing it to WC LS. If the SF value and the canonical form differ beyond capitalization (e.g., `vehiclewrap` vs `Vehicle Wrap`), the SF LS is updated to the canonical form. Case-only differences (e.g., `gmb` vs `GMB`) are treated as equivalent and left unchanged.
 
