@@ -745,23 +745,23 @@
 
 | API Name | Label | Data Type | Required | Description |
 |----------|-------|-----------|----------|-------------|
-| AreaLabel__c | Area Label | Text(255) | No | — |
+| AreaLabel__c | Area Label | Text(255) | No | The room name. **Frequently blank** — fall back to `ProductName__c`, which carries the room in its last segment. See below. |
 | ChangeOrderRelated__c | Change Order Related | Checkbox | Yes | — |
 | ColorCeiling__c | Ceiling Color | Lookup(PaintColor) | No | — |
 | ColorFloor__c | Floor Color | Lookup(PaintColor) | No | — |
-| ColorNotes__c | Color Notes | Text Area(32768) | No | — |
-| ColorOther__c | Other Color | Lookup(PaintColor) | No | — |
+| ColorNotes__c | Color Notes | Text Area(32768) | No | Carries orphan-surface color overflow as text — see the surface-slot note below. |
+| ColorOther__c | Other Color | Lookup(PaintColor) | No | **One shared slot for every non-standard surface.** See below. |
 | ColorTrim__c | Trim Color | Lookup(PaintColor) | No | — |
 | ColorWall__c | Wall Color | Lookup(PaintColor) | No | — |
 | Dimensions_Height__c | Dimensions Height | Number(3, 1) | No | — |
 | Dimensions_Length__c | Dimensions Length | Number(3, 1) | No | — |
 | Dimensions_Width__c | Dimensions Width | Number(3, 1) | No | — |
 | DisposalCost__c | Disposal Cost | Currency | No | — |
-| FinishCeiling__c | Ceiling Finish | Picklist | No | — |
-| FinishFloor__c | Floor Finish | Picklist | No | — |
-| FinishOther__c | Other Finish | Picklist | No | — |
-| FinishTrim__c | Trim Finish | Picklist | No | — |
-| FinishWall__c | Wall Finish | Picklist | No | — |
+| FinishCeiling__c | Ceiling Finish | Picklist | No | Same 11 values as `FinishWall__c` |
+| FinishFloor__c | Floor Finish | Picklist | No | Same 11 values as `FinishWall__c` |
+| FinishOther__c | Other Finish | Picklist | No | Same 11 values as `FinishWall__c` |
+| FinishTrim__c | Trim Finish | Picklist | No | Same 11 values as `FinishWall__c` |
+| FinishWall__c | Wall Finish | Picklist | No | **Active values (11):** Flat · Matte · Eggshell · Satin · Pearl · Low Lustre · Soft Gloss · Semigloss · Gloss · Kitchen & Bath (Regal) · Bath & Spa (Aura). All five `Finish*__c` fields carry an identical value set — verified in production 2026-08-13. Note `Semigloss` (one word, no hyphen) — a tool writing `Semi-Gloss` will fail. |
 | Interior_Exterior__c | Interior/Exterior | Picklist | No | — |
 | LegacyId__c | LegacyId | Text(18) | No | — |
 | MaterialType__c | Material Type | Picklist | No | — |
@@ -797,6 +797,35 @@
 
 
 </details>
+
+> #### ⚠️ Surface colors: four dedicated slots, everything else shares one (verified in production 2026-08-18)
+>
+> `Surfaces__c` accepts far more values than there are color fields. Only four have a dedicated
+> lookup — **Walls, Ceiling, Trim, Floor**. Everything else (cabinets, doors, accent walls, windows,
+> closets, shelves) is an **orphan surface** with nowhere of its own to live, and routes like this:
+>
+> | Orphan surfaces on the line | Where the color goes |
+> |---|---|
+> | exactly one | `ColorOther__c` / `FinishOther__c` |
+> | two or more | `ColorNotes__c`, as text — `ColorOther__c` left blank |
+>
+> **The consequence for any consumer: `ColorOther__c` does not say which surface it belongs to.**
+> A line with both cabinets and a door, where only the door was given a color, stores that color in
+> the shared slot — and a reader that assumes the slot means "cabinets" will render the door's color
+> against a surface the customer may have declined to paint. With two or more orphan colors there is
+> no structured value at all, only prose in `ColorNotes__c`.
+>
+> Anything rebuilding per-surface color from Salesforce alone therefore **cannot** be complete for
+> orphan surfaces. Systems that collect these colors should keep their own per-surface record and
+> treat the Salesforce write as the outbound copy, not the source.
+
+> #### `AreaLabel__c` is often blank — use `ProductName__c` for the room
+>
+> `AreaLabel__c` is the room name, and it is empty on a large share of line items — including whole
+> work orders where not one line has it. `ProductName__c` is formatted
+> `{Product Family}: {Product}: {AreaLabel__c}`, and the product itself is the room type, so the
+> **last non-empty colon-separated segment yields a usable room name** even when `AreaLabel__c` is
+> null. Prefer that to printing a placeholder like "Untitled area".
 
 ---
 
@@ -1633,12 +1662,33 @@ _Label: Paint Color_
 
 | API Name | Label | Data Type | Required | Description |
 |----------|-------|-----------|----------|-------------|
-| Code__c | Code | Text(255) | No | — |
+| Code__c | Code | Text(255) | No | The manufacturer's code alone. **On colors that have no code, this holds the color name instead** — see the trap below. |
 | Collection__c | Collection | Text(255) | No | — |
-| FullName__c | Full Name | Text(1300) | No | Formula: `Code__c & " " & Name__c` |
+| FullName__c | Full Name | Text(1300) | No | Formula: `Code__c & " " & Name__c`. ⚠️ Produces a doubled string on codeless colors — see the trap below. |
 | HexValue__c | Hex Value | Text(10) | No | — |
 | Manufacturer__c | Manufacturer | Lookup(Account) | No | — |
-| Name__c | Name | Text(255) | No | — |
+| Name__c | Name | Text(255) | No | The bare color name, **without** the code. |
+
+> #### ⚠️ Three name fields — pick the right one (verified in production 2026-08-18)
+>
+> There are three ways to render a paint color and only one is safe:
+>
+> | Field | Holds | Codeless color |
+> |---|---|---|
+> | **`Name`** (standard) | `<CODE> <Color Name>` — already combined | correct — just the name |
+> | `Name__c` | the bare color name | correct |
+> | `FullName__c` | formula `Code__c & " " & Name__c` | **doubles** — `<Name> <Name>` |
+>
+> **Use the standard `Name` on its own.** It already carries code + name, so appending `Code__c`
+> to it prints the code twice (`<CODE> <Color Name> <CODE>`).
+>
+> The trap is `FullName__c`, which *looks* like the field built for this. Not every color has a
+> code — for those, `Code__c` is populated with the color name, so the formula concatenates the
+> name to itself. Any consumer wanting code + name should read `Name`, or compose `Code__c` +
+> `Name__c` and skip the code when the two are equal.
+>
+> Found via the Command Center's supplier-order email, which appended `Code__c` to `Name` and
+> shipped doubled color names to vendors.
 
 
 ### Payment_Term__c  
