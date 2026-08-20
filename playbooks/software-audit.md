@@ -30,7 +30,7 @@ The script (`software_audit.py`) handles all data collection automatically:
 1. Queries each platform for active license count and user list
 2. Compares counts against contract limits
 3. Cross-references platform user emails against `Software__c` active records — flags anyone in a platform with no SW record, or in SW with no platform presence
-4. Enriches gaps into three buckets: email mismatch (SW record exists under different email), known staff (SW record of this type missing), unknown (no SF footprint — investigate before creating anything)
+4. Enriches gaps into three buckets: email mismatch (the *same account* under a new address — update the record), known staff (a *different account* on a known staff record, or a type not yet recorded — create a record), unknown (no SF footprint — investigate before creating anything). See **Account identity** below for how the two are told apart, and why "the staff record already has one" is not sufficient evidence.
 5. Runs `Allocation__c` checkover query and flags people where `Checkover__c = 'Check'`
 6. If any platform fails, prints all errors and prompts before writing to Airtable — abort (`n`) to fix and re-run; proceeding (`y`) shows `⚠️ ERROR` for failed systems
 7. Updates the recurring audit ticket's `**AUDIT ACTION ITEMS**` section — PRE-AUDIT and POST-AUDIT sections above the marker are preserved
@@ -200,7 +200,112 @@ Keeping `Software__c` records in sync with the platforms is a two-directional ch
 
 The audit's cross-reference produces both directions ("active in SF, not found in platform" and "active in platform, not in SF").
 
-**Accepted noise:** an unlimited-license product (e.g. S-Sign) will show SW records "active in SF, not on platform" because the platform-side check is a permission-set/email match that doesn't line up 1:1. Don't chase these.
+**Accepted noise:** an unlimited-license product (e.g. S-Sign) will show SW records "active in SF, not on platform". These are usually false negatives, not stale records — don't chase them, but understand *why* before dismissing them.
+
+### Checking a managed package's real roster
+
+A user can hold a managed-package license through **four independent paths**. Querying one and concluding "not on platform" produces false negatives every run:
+
+1. **Permission sets** — a package typically ships *several* (e.g. an Experience Cloud user set, a general user set, an administrator set, a site internal-user set). Query them **all**, not the first one you find:
+   ```sql
+   SELECT Name, Label FROM PermissionSet WHERE Name LIKE '%<pkg>%'
+   ```
+2. **Permission set groups** — `PermissionSetAssignment` returns the *group's* aggregate entry, not the sets inside it. Expand via `PermissionSetGroupComponent`.
+3. **Profile-based access** — a System Administrator profile can grant the package's objects directly with **no permission set at all**. This path is invisible to every permission-set query.
+4. **`UserPackageLicense`** — only meaningful when the package is seat-limited. On an unlimited license (`PackageLicense.AllowedLicenses = -1`) Salesforce doesn't enforce per-user rows, so this table **drifts and fills with inactive users**. Do not treat it as the roster on an unlimited product.
+
+**The decisive check is usage, not configuration.** Config tells you who *could* use the product; the package's own records tell you who *does*. Query the package's primary object grouped by `CreatedBy` (for an e-signature product, the envelope object) over a trailing window. A user with real activity holds a real license regardless of which access path grants it.
+
+> Worked example: an S-Sign cross-ref keyed on a single permission set flagged ~10 senior staff as "not on platform" every month. Widening to all four permission sets cleared most; the remainder were System Administrators with direct object access, confirmed as genuine users by their envelope-creation history. Zero were stale.
+
+---
+
+## Account identity — a renamed address vs. a second person
+
+When the cross-reference finds a live platform account with no `Software__c` record, the audit
+has to decide between two possibilities that look identical if you only compare email strings:
+
+- the **same account** under a new address (the person's email changed) -> update the record
+- a **different account** on a staff record that already has one -> create a new record
+
+Getting this wrong is expensive in one direction: reporting "update the existing record" when the
+account actually belongs to someone else tells the operator to overwrite a live colleague's record,
+which drops a real seat from tracking and misdates the allocation. It is also unstable — once
+actioned, the same record flips back the following month.
+
+**Why "the staff record already has one" is not enough.** A staff record does not always represent
+one human. Licensee, affiliate and pooled records (a shared non-employee bucket, a partner entity)
+legitimately carry several people's seats under a single staff record. Any classifier that keeps
+one email per (staff, type, license), or that treats "the stored address differs from the platform
+address" as proof of a rename, will misread every additional seat on those records as a rename.
+
+**Use three signals, conjunctively.** Report a rename only when all applicable signals agree;
+otherwise report that a new record is needed.
+
+| Signal | Rule | Rationale |
+|---|---|---|
+| **Liveness** | the stored address must no longer be a live account on that platform | an address still in use belongs to someone still using it |
+| **Name** | platform account name must match the staff record name above a threshold | shared entities score far below real people; the gap is wide |
+| **Created** | the account must not have been created materially after the record's `Start_Date__c` | a brand-new account cannot be a rename of an older record |
+
+### Signal availability differs by platform — check before relying on one
+
+Do not assume a signal exists everywhere. Verify per platform:
+
+| Platform family | Name signal | Creation date |
+|---|---|---|
+| Salesforce (and any product whose seats are SF Users) | yes — `User.Name` is admin-managed | `User.CreatedDate` |
+| Google Workspace | yes — directory-managed | GAM `creationTime` |
+| Dialpad | yes | `date_added` |
+| Slack | **no** — see below | **no** — see below |
+
+**Slack is the exception on both counts.**
+
+- `users.list` exposes no account-creation field. The value lives on the SCIM API, which requires
+  an admin *user* token (not a bot token) **and** a Business+/Enterprise Grid plan. A read-scoped
+  bot token on a free workspace gets `401`. Confirm token type and plan before concluding the data
+  is missing.
+- Slack display names are **user-edited**, so they do not separate people from entities the way
+  admin-managed names do. Real people commonly appear as a first name only, an accented spelling,
+  or a first-name-plus-initial, scoring in the same range as pooled entity records. Never gate a
+  Slack decision on a name match.
+
+Liveness alone is sufficient for Slack, and it handles an email-domain migration correctly: changing
+the address on an existing Slack account preserves the member id and removes the old address from the
+roster, so the old address goes stale and the rename is detected. Where certainty is required,
+store the platform's stable member id on the SW record instead of inferring from the address.
+
+### `Start_Date__c` is a tracking date, not an account birthday
+
+Bulk onboarding leaves large clusters of records sharing one `Start_Date__c` — the date tracking
+began, unrelated to when any account was created. The creation-date signal must **abstain** on those
+dates rather than guess. Identify them by grouping active records by `Type__c` and `Start_Date__c`
+and looking for a single date holding a large share of one type.
+
+Do **not** paper over this with a fuzzy tolerance window. A window wide enough to absorb one
+platform's backfill will still miss another's (observed: over a year of skew), while being
+unnecessary on a platform whose dates are clean. Abstaining on the known bulk dates is exact and
+leaves only genuine provisioning lag (a few days) to absorb.
+
+### On adding a "shared entity" flag to the staff object
+
+Tagging pooled/licensee staff records with a picklist value is a reasonable instinct and is fine to
+maintain for billing or reporting. It is **not** sufficient as the audit's differentiator: it only
+works where it has already been backfilled, it depends on discipline for every new partner, and it
+still does not answer whether the existing record is stale. The name signal covers the same case
+with no data dependency. Prefer signals derived from the systems themselves over flags that require
+upkeep.
+
+### Regression controls
+
+Keep the classifier directly unit-testable and assert both directions — a "no mismatches found"
+result is only meaningful if the rename path can still fire:
+
+- **rename must fire:** a stale address on a single-person staff record; an email-domain migration
+- **rename must not fire:** an additional seat on a shared record; churn on a shared record, where
+  the old seat *is* stale and a different person joins (liveness alone misfires here; the name
+  signal is what catches it)
+- **abstention:** a record sitting on a bulk-backfill date must not be treated as date evidence
 
 ---
 
