@@ -275,6 +275,40 @@ design surface" — the copy you forget is the one that writes to production.
 ### Batching
 Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `allOrNone=false` — same governor-limit reasoning as Section 1.
 
+### Re-verify against the classifier itself, not a paraphrase of it
+
+The review sheet is a snapshot. Hours or a day pass between the sweep that classified a record and
+the human approval that acts on it, and records move in that window — so the apply step must re-check
+every condition live before it writes. Two things about *how* to re-check:
+
+**Import the classifier's own functions; do not re-implement the criteria in the apply script.** An
+apply script that hand-rolls "the close-out test" will drift from the sweep, and the drift is
+invisible: both scripts look correct in isolation and disagree only on the records that matter. This
+is the same failure mode as duplicating a threshold constant, one level up — the unit that drifts is
+the *predicate*, not the number. Keep the sweep module import-safe (guard its entry point) so the
+apply script can pull the real functions in.
+
+⚠️ **A module global that is populated at runtime is EMPTY on import.** This is the trap that makes
+the import approach backfire. A sweep typically resolves some state during its main run — an
+exemption list queried by profile, an activity-date map built from a transaction pull — and stores it
+in a module-level dict or set that the criteria functions read. Import the module from elsewhere and
+those functions still run, but against empty state. The failure is **silent and directional**: every
+record grades as missing whatever the empty structure was supposed to supply, so the apply script
+blocks records it should have written and reports a clean "0 written, all blocked" run that looks
+like a legitimate result. Enumerate the runtime-populated globals and repopulate them exactly as the
+sweep's own entry point does.
+
+### Diff a marked-up approval file against the sheet it came from
+
+When approval comes back as an exported CSV of hand-marked rows, reconcile those rows against the
+**tabs** of the source workbook before writing — do not trust the filename or the approval column to
+tell you which route a row was on. An approver working across tabs can easily carry a surface-only /
+flag-only row into the approved export alongside genuinely auto-fixable ones; the row still carries
+its "not auto-fixed" note in a text column, but nothing structural stops the write. Gate those rows
+behind an explicit opt-in flag in the apply script so the routing hold cannot be overridden by
+accident, report them as *held* rather than dropping them silently, and put the question back to the
+approver.
+
 ---
 
 ## Section 4b — Attendance-exempt corps — RETIRED
