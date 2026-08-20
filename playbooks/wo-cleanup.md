@@ -227,10 +227,12 @@ Real (non-estimate) WOs where the job is fully complete should move to `Status =
 - `Total_Undeposited_Payments__c` = 0 — the **amount** field; do not use the count field `UndepositedTransactions__c`
 - **No transaction activity for more than 7 days** — see "Anchor the quiet-period gate on all activity" below
 - `TotalPayoutsForLabor__c` != 0
+- **Labor payouts clear the payout floor** — payouts must be **>= 20% of the quoted value net of materials**, not merely non-zero. See "Payout floor" below. Below the floor the WO is **flagged, never closed**.
 - **Excludes:** opps owned by specific excluded owners, opps where `Corporate_Name__c` matches a configured corporate exclusion (same exclusions as Section 3)
 
 ### Flag for manual review (meets all completion signals except one — do not close)
 - No transaction of any kind on the record → should not normally occur on a complete, settled job
+- **Owner is configured surface-only** — some owners keep every rule but are never auto-written: a would-be close becomes a flag so it is raised with them instead. Apply this test *last*, so it converts an otherwise-eligible close into a flag rather than pulling records that the silent-skip rules would have held onto the sheet every cycle.
 - `TotalPayoutsForLabor__c` = 0 AND `EndDate` older than 60 days → labor would have requested payment by then
 
 ### Silent skip (not closed, not flagged — reconsider next run)
@@ -275,30 +277,39 @@ Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `al
 
 ---
 
-## Section 4b — Attendance-exempt corps (recurring)
+## Section 4b — Attendance-exempt corps — RETIRED
 
-Some licensee / commercial operators are not yet held to the attendance-logging policy and leave `LaborDaysActual__c` blank, so their completed WOs are structurally skipped by the Section 4 filter (which requires `LaborDaysActual__c != 0`). They accumulate as done-but-open WOs and need a separate close pass each cycle. Same two-step, never-auto-close discipline and REST-composite batching (10/batch, `allOrNone=false`) as Section 4.
+**This section described a second close pass that no longer exists.** It is kept because the way it
+became obsolete is the reusable lesson.
 
-### Base filter (WOs owned by a configured attendance-exempt owner list)
-- Opp `StageName = 'Closed Won'`
-- `Status` NOT IN (Coordination, Scheduling, On Hold, Pending, Canceled, Closed)
-- `BalanceOwed__c = 0`
-- `Total_Undeposited_Payments__c = 0`
-- `StartDate` and `EndDate` both set
-- `RequestReview__c != null` (estimator-finalized signal — see below)
-- WorkType does not contain "Appointment"
+**The original problem.** Some licensee / commercial operators are not held to the attendance-logging
+policy and leave `LaborDaysActual__c` blank. The Section 4 candidate query required
+`LaborDaysActual__c != 0` as a blanket "work happened" gate, so those WOs were **structurally
+invisible** to it — not skipped with a reason, simply never returned. A parallel pass was built that
+substituted `TotalPayoutsForLabor__c > 0` as the work-happened signal.
 
-**Status is not gated on a specific done-status.** For these corps the label is unreliable (jobs sit on "Work In Progress" long after they settle), so completeness is established by the estimator-finalized signal + dates + `$0` balance + crew payout instead. `Canceled`/`Closed` stay excluded — never close those.
+**What retired it.** Attendance was later scoped so it is graded **only for owners it actually
+applies to**, and the blanket filter was dropped from the query. Once that landed, the main pass
+handled these owners correctly with no exemption at all — the exempt-owner list had become a
+description of who the rule already skipped, not a rule of its own.
 
-**`RequestReview__c` requirement.** This field is set by the estimator (it drives whether account management solicits a customer review); a non-null value means the estimator has finalized the WO. The scheduled status-automation batch (`WorkOrderStatusAutomation`) won't advance a WO to a Complete status while it's null, so this pass must not either — never close a WO the estimator hasn't finalized.
+**The trap: a superseded script that still runs.** The retirement step was not done when the filter
+was dropped, so the parallel pass stayed executable for several days after it was redundant — and it
+had drifted badly in the meantime. It was missing **two gates the main pass had gained**: the
+quiet-period activity gate (it proposed closing records that had taken payments within five days,
+one of them a five-figure payment the previous day) and the surface-only owner routing (it would
+have auto-written records for an owner who had been moved to flag-only). Because closing is one-way,
+either would have been unrecoverable.
 
-### Then classify (mirrors Section 4)
-- `TotalPayoutsForLabor__c` > 0 → **close-eligible** (crew was paid = work happened)
-- `TotalPayoutsForLabor__c` = 0 AND `EndDate` older than 60 days → **flag** for review, never auto-close (payout would have been recorded by now — either unrecorded or the job wasn't actually done)
-- `TotalPayoutsForLabor__c` = 0 AND `EndDate` within 60 days → silent skip (too recent — payout may simply be unrecorded)
-
-### Preferred end state (retires 4b)
-Fold the exemption into the Section 4 candidate logic: drop `LaborDaysActual__c != 0` from the hard filter and enforce it in classification instead — require it **unless** the owner is attendance-exempt, in which case use `TotalPayoutsForLabor__c` as the work-happened signal per the rules above. Validate with a read-only pass before adopting so nothing over-closes.
+**Generalisable rules:**
+- When a filter is removed to fix scoping, **check what that filter was propping up.** A workaround
+  built around a filter becomes dead the moment the filter goes — but it does not stop running.
+- **Retire the workaround in the same change** that removes its reason to exist, or it silently
+  ages out of policy while remaining runnable.
+- A superseded script should **hard-exit**, not merely be documented as deprecated.
+- Knowledge the workaround carried (here, which owners are licensee operators) belongs in the shared
+  reference module, explicitly labelled as **descriptive context, not an active gate** — otherwise
+  the next person re-implements the exemption it was meant to retire.
 
 ---
 
@@ -487,6 +498,94 @@ and the backlog of unfixable history stopped being generated.
 
 **Generalise:** before adding a rule that inspects finished records, ask what action it implies and whether
 anyone can still take it. If the answer is "reconstruct it from memory," the rule belongs at the gate.
+
+### Building that close-gate validation rule — four traps
+
+Moving the check from a script to a validation rule is the right call, but the rule is enforcement code
+and fails in ways a report does not. All four below were hit on a single team-scoped attendance rule
+that sat **inactive and silently broken for twelve days** before anyone noticed.
+
+**1. A manager-chain clause is easy to write inside-out.** Scoping "owners who roll up to manager M"
+across two levels needs `OR`, not `AND`:
+
+```
+OR(CONTAINS(Owner:User.Manager.Full_Name__c,        "<manager>"),
+   CONTAINS(Owner:User.Manager.Manager.Full_Name__c, "<manager>"))
+```
+
+`AND`ed, it demands the owner's manager **and** grandmanager both be that person — which **nobody**
+satisfies, because a direct report has the manager at level 1 and a skip-level report has them at
+level 2, never both. The rule saves cleanly, activates cleanly, and never fires. **Before trusting any
+manager-chain formula, enumerate the real reporting tree and confirm at least one live user evaluates
+TRUE.** A rule that blocks nothing is indistinguishable from a rule nobody has tripped yet.
+
+**2. Verify the depth of the tree, not just the formula.** A two-level clause is complete only while
+the org chart is two levels deep. Compare the formula's matches against the **transitive** roll-up
+computed from live `ManagerId` data and assert both directions — on-team-but-missed and matched-but-
+off-team. Re-check whenever the org chart moves; a third level added later escapes silently.
+Name-substring matching (`CONTAINS` on a full-name field) also needs a check that exactly one person
+in the org matches that string.
+
+**3. Enumerate who holds the bypass permission — including automation users.** A `NOT($Permission.X)`
+clause exempts every holder, and permission sets grant it far more widely than expected. Two
+consequences: an admin **cannot test their own rule as themselves** (use login-as, which keeps the
+target user's permissions), and any **scheduled Apex or integration user** holding the permission
+bypasses the rule entirely.
+
+**4. Keep automation exempt on purpose, and write down why.** Where a scheduled job advances status in
+bulk, check how it saves. A class ending in `Database.update(list, false)` that never inspects the
+returned `SaveResult[]` swallows validation failures **silently** — no exception, no log entry, no
+error to any human, and the affected records simply stop progressing. Gating such a job with a
+validation rule produces an invisible stall, not an enforced policy. If the automation user already
+holds the bypass permission, that is protective; leave it, and record the reason so nobody later
+"fixes" it.
+
+**Related — pick the enforcement bar separately from the reporting bar.** The gate and the report
+answer different questions, so they should not be forced to share a threshold. A minimal
+"something was logged" test is the right shape for prevention: it is unambiguous at the point of
+save, and it is the part a user can act on immediately. A proportional completeness bar (see
+"Attendance completeness rule") stays in triage, where partial logging can be quantified and chased
+without blocking work. Expect a small band that clears the gate but still gets flagged downstream —
+that band is the design working, not a leak. Verify the cost of the looser bar by counting, over a
+recent window, how many records each candidate threshold would have caught.
+
+## A status-advance rule needs proof the job started — a date is not proof
+
+Two rules advance a WO out of the pre-work statuses (Coordination / Scheduling) into Work In Progress.
+They are written as a first-match-wins chain, so they are mutually exclusive, and that exclusivity is
+what makes them safe to treat differently:
+
+| | fires when | evidence it holds |
+|---|---|---|
+| **work-logged rule** | `LaborDaysActual__c > 0` **or** `TotalPayoutsForLabor__c > 0` | crew days or a labor payout exist — the job demonstrably started |
+| **stale-date rule** | neither of the above, and `StartDate` passed by more than a small grace | **only** that a planned date came and went |
+
+Because the chain is `elif`, the stale-date rule only ever sees records with **zero** attendance *and*
+**zero** payouts. It has no evidence the work began — a start date is a plan, and plans slip.
+
+**Therefore gate the stale-date rule on the schedule-confirmation checkbox
+(`ScheduleConfirmedWithClient__c`), and do not gate the work-logged rule.** Gating the work-logged rule
+would be a no-op by construction: it requires logged work to fire at all, and logged work overrides the
+checkbox. The two rules already partition on exactly the axis the gate cares about.
+
+**Unchecked must route to a field question, never a silent suppression.** Suppress the *ask*, not the
+*row* — the review sheet keeps full visibility and only the outbound email is throttled. A gate that
+removes rows teaches the process to hide its own backlog.
+
+**Why this matters beyond the one rule:** the same cleanup can re-create, days later and through a
+second door, the exact behaviour a real-time automation change was introduced to prevent. When an
+automation rule changes, grep the batch/cleanup layer for anything that reaches the same end state.
+
+### Size a gate on the population it can actually reach
+
+Measuring the checkbox's adoption across *all* Coordination work orders gave **7.3%**, which made the
+gate look like it would block nearly everything. That was the wrong denominator: the rule can only ever
+touch WOs that **have a `StartDate`**, and most Coordination WOs have none. Among records the rule can
+actually reach, adoption was **81%**.
+
+**Generalise:** before rejecting a gate as too strict, compute adoption over the rows the rule can
+reach, not over the whole status. A field that looks unused org-wide is often well-populated by the
+time the record reaches the state the rule cares about.
 
 ## Scope exclusions are a design surface, not a footnote
 

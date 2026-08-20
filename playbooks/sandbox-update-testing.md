@@ -28,4 +28,41 @@ Reusable workflow for validating managed-package upgrades and config changes in 
 - **Flow-deploy-to-Draft quirk** — after deploying a flow, verify the active version; it can land in Draft and silently stop firing.
 - **Subagent fan-out** — the validation areas are independent, so running them as parallel agents (one per area, each returning a health verdict) is efficient and keeps the evidence separated by concern.
 
+## Porting a single component into sandbox
+
+Backfilling one component (a validation rule, a flow, a field) so the orgs match is a smaller job than
+a package upgrade, but it has its own failure modes.
+
+- **Generate the metadata from the source org — never retype it.** Pull the live definition
+  (`sf data query --use-tooling-api ... SELECT Metadata FROM ValidationRule ...`) and write the
+  `-meta.xml` from that value programmatically, XML-escaping as you go. Formulas contain `>`, quotes
+  and significant whitespace; hand-transcription silently changes behaviour and the deploy still
+  succeeds.
+- **Dry-run first** (`sf project deploy start --dry-run`). For a formula component this is a free
+  compile check in the target org, which is the main thing that can fail.
+- **Verify by reading it back and diffing against the source — but normalise whitespace.** Deploys
+  normalise line endings, so a raw string comparison reports "different" on an identical rule. Diff
+  the lines, then compare with whitespace stripped, and only investigate if *that* differs.
+
+### Metadata parity is not behavioural parity
+
+The trap worth naming separately: **a component whose logic reads org *data* can deploy cleanly,
+compile cleanly, be Active — and still be permanently inert in the target org.**
+
+The case that surfaced this: a validation rule scoping records by the owner's **management chain**
+(`Owner:User.Manager…`) and matching on a manager's name. Every *metadata* dependency existed in
+sandbox — the custom permission, the roll-up field, the custom name field on User — and the two-level
+relationship traversal compiled. But sandbox held **no user with that manager's name at all**, and
+only a small fraction of sandbox users had any `ManagerId` populated. The owner clause could never
+evaluate TRUE, so the rule enforced nothing there and its silence was indistinguishable from a rule
+that was working.
+
+**How to apply:** before treating a sandbox port as testable, check the **data the formula reads**,
+not just the fields it references. For anything keyed on ownership, role hierarchy, management chain,
+record type population, or a named user, run the underlying query in the target org and confirm a
+non-empty result. If it comes back empty, the port is metadata parity only — record that explicitly
+so nobody later reads the rule's silence in sandbox as evidence it is broken, or as evidence it is
+safe. Sandboxes are refreshed on their own cadence and user records are among the first things to
+diverge.
+
 The detailed test playbook and per-run questionnaire live in the private project; this is the reusable shape.
