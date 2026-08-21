@@ -70,6 +70,41 @@ WHERE LeadGroup__c != 'Home Advisor'
 
 ---
 
+## Who owns Lead Group in Salesforce
+
+**`Lead_SetCalculatedValues`** — an **active AutoLaunchedFlow, RecordBeforeSave, on Create and
+Update** — is what actually writes `LeadGroup__c`. It reads the same `Lead Group Category` custom
+metadata this clean-up reads, and resolves the group in this precedence order:
+
+1. exact `Source.Medium` match
+2. source-only match
+3. wildcard match
+4. fall back to `Other Marketing`, or leave blank
+
+A sibling pair, `Lead_SetAdCostDetail` and `Opportunity_SetAdCostDetail`, then use Lead Group as the
+lookup key for Ad Cost Detail. All three read metadata through the shared `FlowLib_GetSystemSettings`
+subflow.
+
+**This is the automation that makes job 3 necessary.** Because the flow is *before-save on every
+update*, any write that touches Lead Source or Lead Medium re-derives Lead Group from the metadata
+and can overwrite a value set by hand — so the Lead Group re-upload has to run last.
+
+**It also means the metadata is live production logic, not just a lookup table this script reads.**
+Editing a `Lead Group Category` record changes how Salesforce classifies every subsequent lead
+create and update, immediately and without a deployment. Treat those records as code.
+
+⚠️ **Finding this took four attempts; the shortcuts that failed are worth knowing:**
+- Querying `FlowDefinitionView` filtered on the Lead trigger object returns **nothing** — the flow is
+  registered as an AutoLaunchedFlow, so a trigger-object filter never sees it. **Retrieve the flow
+  metadata and grep it** instead of trusting summary views.
+- **Field history does not record values set on insert.** A before-save flow that stamps the group at
+  creation leaves no history row, so every write in `LeadHistory` looks like it came from a person.
+  Absence of an automated user in field history is *not* evidence that no automation exists.
+- Searching Apex is worth doing but is not sufficient, and a clean Apex scan proves less than it
+  looks: most classes in a mature org are managed-package and their bodies are unreadable.
+
+---
+
 ## SF Startup Queries (run once at script launch)
 
 ```sql
@@ -385,6 +420,14 @@ Some SF Lead Sources have hardcoded LM/LG values applied regardless of WC data:
 ### Lead ACD
 Key: `{month_num} {year} {ServiceTerritory} {ACD_type}`
 
+> ⚠️ **Derive `month_num` / `year` in the org's business timezone, not UTC.** Salesforce returns `CreatedDate`
+> in UTC. Parsing it yields a UTC-aware datetime, and reading `.month` off that gives the **UTC** month — so a
+> lead created at 8:19pm Eastern on Jul 31 (00:19 UTC Aug 1) is allocated to **August** ad spend. This
+> misallocates every lead created in the last few hours of a month, silently, forever, and only at month
+> boundaries — which is why it can survive years of review. Convert to the business timezone before taking
+> month/year, and use a **real timezone**, never a fixed UTC offset: a hardcoded offset is correct for half the
+> year and wrong for the other half once DST shifts.
+
 - ACD type from `System_Setting__mdt`: Lead Group → ACD type
 - If no ACD found for that territory + month + type → **flag for Quality Review** (ACD gap)
 - No fallback to Out of Area — an ACD gap always routes to review
@@ -425,9 +468,41 @@ Territories that periodically have no ACD and always route to Lead Review:
 
 ---
 
+## Pre-Upload Guards (run between the clean-up and the upload)
+
+A separate **read-only** script re-queries Salesforce after the batch is generated and before anything is
+written. It exists because the batch is built from a snapshot, reviewed by humans, and uploaded later — every
+one of those gaps can invalidate it.
+
+1. **Change shapes** — collapse the upload into distinct change-shapes and review by class, not by row. Batches
+   are extremely repetitive: in one run 788 rows reduced to 17 shapes and a single shape was 75% of the batch.
+   Validating that one rule settles most of the upload; the long tail is a handful of singletons. This turns an
+   unreviewable CSV into a ten-minute decision.
+2. **Freshness** — list records edited in the source system since the export was pulled, and flag any that
+   collide with the staged batch. A reviewer's or a rep's edit made during the review window is silently
+   reverted by the upload. Distinguish *conflicts* (same field, different value — drop these) from *additive*
+   edits (different fields — safe).
+3. **Provenance** — for each proposed change, look up **who last set the value that is there now**, and weight
+   the hold accordingly: a value a person set deliberately needs sign-off before it is overwritten; a value an
+   automated integration set may legitimately be superseded; a value written at record creation is safe. A
+   binary "was this touched" flag is not enough — the actor is the signal.
+4. **Coherence** — validate the **projected** post-upload state (current value + staged change), never the
+   current state alone. The upload writes only changed fields, so a partial correction can leave a record
+   internally inconsistent. Prefer the platform's own metadata and formula fields as the oracle over
+   re-implementing the mapping — a second copy of the rules drifts from the first.
+
+**A check that cannot fire is not a passing check.** Before trusting a zero, run the same validator against
+current state and confirm the count is non-zero, or unit-test the comparison directly. A draft of this guard
+tested a text-formula field for truthiness — and the string `"FALSE"` is truthy — which silently suppressed an
+entire check; the real failure count was 25, not 1.
+
+Re-run the guards **after** the upload as well. A bulk job's success count means rows were accepted, not that
+the values persisted or that downstream automation left them alone.
+
 ## Gotchas
 
 - **Inactive service territories route to Out of Area** — leads can exist in SF under a service territory that has since been deactivated. Because inactive STs are excluded from the zip code → territory mapping, those leads will never receive a valid ACD for their original territory. The script detects this at runtime by querying `ServiceTerritory WHERE IsActive = false` and automatically reroutes any such lead to the Out of Area territory and its corresponding ACD. The `*NEW ST` column is populated so the territory is corrected on upload.
+- **When outside-territory ACD routing looks wrong, suspect the owner's territory code before the rule.** Outside-territory opps are charged to the *owner's assigned territory*, not the territory the work is in — that is intentional. So a lead whose ACD lands in a neighbouring territory is usually a stale `Assigned_ST_Unique_Code__c` on the **User** record, not a logic bug. Correcting one such code moved 40+ records in a single run, because a rep's code governs every outside-territory opp they own. Fix the User record, then re-run; do not special-case the rule.
 - **LG re-upload is required** — the LS+LM→LG automation fires on any LS or LM change and can wipe a manually-set LG. Always run job 3 after jobs 1 and 2.
 - **Catch-all fires last** — after all rules run, any lead or opp still missing LS, LM, LG, or ACD is flagged with a list of the missing fields. This catches edge cases no specific rule covers (e.g. a lead with a known LS but blank LM/LG that fell through uncorrected).
 - **The wallpaper subsidiary's ACDs are matched on a notes tag, not on territory** — the durable lookup key is a fixed marker string on the ACD's notes field, set by hand on each new monthly ACD. Historically these ACDs carried no Service Territory; they now do carry a dedicated one, so do **not** write logic that assumes the territory is empty. Match on the notes tag. Also do not match on the corporate account name — that entity has been renamed once already, which silently stranded leads on the wrong ACD until it was caught.
