@@ -73,6 +73,40 @@ Two active flows materially affect when a WorkOrder can be safely modified from 
 
 Inserting a new WO from a Closed Won opp with a real (non-Estimate-Appointment) WorkType WILL fire this email. Relevant for any test data setup, sandbox-to-prod data load, or external WO creation. Mitigation when seeding test data: use a test Account whose Primary Contact email is a controlled inbox.
 
+## ⚠️ WorkOrder money — the metric that matters is not on the page
+
+A WorkOrder carries the job's value twice, and the two are separated by a discount applied inside a
+formula:
+
+```
+QuotedSubtotal__c = (OriginalSubtotal__c + Canceled_Line_Items__c)
+                  - Discount_Amount__c
+                  - (NULLVALUE(DiscountPercentageLabor__c,0) * (OriginalSubtotal__c + Canceled_Line_Items__c))
+                  + IF(Materials_Included__c, CostMaterials__c, 0)
+DiscountAmountCalculated__c = NULLVALUE(DiscountPercentageLabor__c,0) * NULLVALUE(OriginalSubtotal__c,0)
+```
+
+**It is not a live sum of the line items** — the base is a stored subtotal, so editing a line item
+lets `Subtotal` and `QuotedSubtotal__c` drift apart with nothing flagging it.
+
+**Layout visibility (verified 2026-08-21 against both WorkOrder layouts):**
+
+| Field | On layout |
+|---|---|
+| `Subtotal` (standard), `TotalPrice`, `TotalDiscount__c` | **No** |
+| **`Quoted_Subtotal_with_Change_Order__c`** — the canonical sales metric | **No** |
+| `Subtotal__c`, `QuotedSubtotal__c`, `DiscountAmountCalculated__c` | Yes, readonly |
+| `DiscountPercentageLabor__c` | Yes, **editable** |
+
+Two consequences. The number the business is measured by is reachable only by report or query, so
+any instruction of the form "open the work order and read X" must be checked against the layout
+first. And the discount percentage that moves that number sits on the page in an editable field —
+no approval step, no trail beyond field history.
+
+**Related field-name trap:** `Subtotal` (standard) and `Subtotal__c` (custom) are not the same
+value. They agree on some records and diverge on others (observed: standard $14,325 against custom
+$16,000 on one WO). Testing on a single record will not reveal this.
+
 ## Opportunity financial fields are sourced from the WorkOrder (not a rollup)
 
 `WorkOrder.SetOpportunityFinancialFields` (RecordAfterSave, Create+Update) copies the triggering WO's values up to its parent Opportunity when the Opp is `Closed Won` and the WO Status ≠ `Canceled`:
@@ -148,7 +182,10 @@ Event.OwnerId = FSSK__FSK_Assigned_Service_Resource__r.RelatedRecordId
 
 **`WhatId` has no Account fallback.** It resolves *only* through WorkOrder → Opportunity. No work order means a null `WhatId` and an Event that links to nothing — there is no "navigate from the Account instead" path.
 
-Two Events are generated per booked SA: one owned by a **territory public calendar**, one owned by the **individual rep User**.
+Two kinds of Event exist — one owned by a **territory public calendar**, one owned by the
+**individual rep User** — but **not every SA produces both.** Measured 2026-08-21 over a 30-day
+window: 1,388 rep-owned against 964 calendar-owned estimate-appointment Events, and sampled SAs are
+found with only the rep's. Do not assume a public-calendar twin exists for a given appointment.
 
 ### ⚠️ Field-name trap — ServiceAppointment carries two work-order links
 

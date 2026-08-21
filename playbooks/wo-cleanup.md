@@ -24,10 +24,15 @@ Dollar figures are used to size and rank the work, never as a recovery target.
   duration or timing *metrics*. (It remains valid inside the cleanup rules themselves — this is a
   reporting caveat, not a rule caveat.) For any timing measure use the status change into a Complete
   status → the change to Closed; both are real recorded events.
-- **`BalanceOwed__c` is structurally ~$0 on any Closed work order** — closing settles it. A rule operating
-  on closed records will always look like near-zero exposure no matter how incomplete the records are, so
-  read the record count rather than the dollars. There is no single dollar metric spanning open and closed
-  rules: balance for open, quoted value for closed.
+- **`BalanceOwed__c` nets to ~$0 on closed work orders — but that is a net, not an absence.** A rule
+  operating on closed records will always look like near-zero exposure no matter how incomplete the
+  records are, so read the record count rather than the dollars. Measured 2026-08-21 inside the modern
+  scope floor (closed, non-estimate, created on or after the FY24 floor — 8,953 records): 195 carry a
+  non-zero balance and they net to roughly −$360, positives and negatives very nearly cancelling.
+  **Do not read "nets to zero" as "no records carry a balance"** — and note the netting is a property of
+  the scope floor, not of closing: drop the floor and the count rises by an order of magnitude with
+  seven-figure sums on both sides. There is no single dollar metric spanning open and closed rules:
+  balance for open, quoted value for closed.
 - **Work order status history has a retention horizon** (roughly 18 months). There is no close-date field,
   so for anything closed before that horizon the close date is unrecoverable. Cohort analysis keyed on
   created date avoids the limit and is less distorted by backlog clearing.
