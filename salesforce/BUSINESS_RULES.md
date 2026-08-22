@@ -204,6 +204,30 @@ The Starter Kit namespace also appears on `User` as `FSSK__FSK_FSL_Resource_Type
 
 Three distinct estimate work types with different durations — `Estimate Appointment` (1 hr), `Phone Estimate Appointment` (0.25 hr), `Partner Estimate Appointment` (1 hr). "Book an estimate" is not a single operation. Multiple FSL **scheduling policies** are configured; the same resource returns different availability depending on which policy runs.
 
+### ⚠️ WorkType is not a reliable interior/exterior signal — read the line items
+
+Deriving a job's scope from `WorkOrder.WorkType.Name` looks obvious and is wrong often enough to
+break anything built on it. Measured in production 2026-08-21:
+
+- Of a 300-work-order sample typed **Interior** but carrying an **exterior** paint product line,
+  **55% had line items that were exclusively exterior** — the work type was the incorrect field,
+  not the product line. A further 30% were genuinely mixed jobs.
+- Mixed jobs are common and carry a **single** work type, so an interior-typed work order routinely
+  contains `Exterior Painting: …` line items.
+
+**Use the line items.** `WorkOrderLineItem.ProductName__c` begins with the product family
+(`Interior Painting: …` / `Exterior Painting: …`), so scope should be derived from the set of line
+items and treated as *both* when they disagree. A work type may be used as a fallback only when
+there are no line items to read.
+
+⚠️ **Do not auto-derive a single scope for a write.** A mixed or mis-typed job has no correct single
+answer, and picking a default silently records a scope nobody chose. Where a field demands one value
+(see `MaterialType__c` in the data dictionary), leave it alone rather than guessing.
+
+Separately, and reassuringly: the estimator's product-line pick is accurate. Only **2.8%** of
+exterior work orders carrying an interior line were genuinely wrong once checked against their line
+items, and the reverse direction was under **0.5%**.
+
 ## Geography / sales tax
 
 - Sales-tax rate is **`ServiceTerritory.TaxRate__c`** (geographic). There is no per-licensee/brand rate and no separate tax object.

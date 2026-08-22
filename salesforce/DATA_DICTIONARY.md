@@ -827,6 +827,35 @@
 > **last non-empty colon-separated segment yields a usable room name** even when `AreaLabel__c` is
 > null. Prefer that to printing a placeholder like "Untitled area".
 
+> #### ⚠️ `MaterialType__c` — two different fields with the same API name (verified in production 2026-08-21)
+>
+> `MaterialType__c` exists on four objects, and the work-order **header** and **line item** versions
+> do not share a vocabulary. They are not interchangeable.
+>
+> **Quote · QuoteLineItem · WorkOrder** — one **restricted** picklist, ten values, shaped as
+> *product line + scope*. No default value is defined on any of them:
+>
+> ```
+> Ultra Spec Interior · Regal Select Interior · Aura Interior
+> Ultra Spec Exterior · Regal Select Exterior · Aura Exterior
+> SW Emerald · SW Duration · SW Super Paint · Other
+> ```
+>
+> **WorkOrderLineItem** — a different, **unrestricted** picklist describing paint *grade*, not line:
+> `Ben Moore Contractor`, `Ben Moore Regal`, `Ben Moore Aura`, `Contractor Grade`, `Standard Grade`,
+> `Premium Grade`, `Other`.
+>
+> **The header field is the estimator's answer, carried from the quote.** Sampled the 15 most recent
+> work orders holding a value with a synced quote: **15 of 15 matched the quote exactly.** Treat
+> `WorkOrder.MaterialType__c` as an estimate-time value with an upstream owner — a system writing to
+> it is overwriting the estimator, not filling a gap.
+>
+> **Two consequences for anything writing here.** The picklist is restricted, so a value outside the
+> ten above is rejected with `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` — and because Salesforce DML
+> is all-or-nothing, one bad value fails every other field in the same update. And the field holds
+> **one** line per work order, so a system modelling a per-colour or per-scope product line cannot
+> represent that here; keep it on your own side and treat this as a read.
+
 ---
 
 ## Task — Custom Fields
