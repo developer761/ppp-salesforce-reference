@@ -2069,6 +2069,7 @@ _Label: Software_
 
 | API Name | Label | Data Type | Required | Description |
 |----------|-------|-----------|----------|-------------|
+| Billing_Term__c | Billing Term | Picklist (restricted) | No | `Monthly — Contract` / `Monthly — No Contract` / `Annual` / `Free`. **Note the em-dash (—), not a hyphen** — `ISPICKVAL()` comparisons must match exactly. Drives whether a blank `End_Date__c` is a data gap: the two "no contract" shapes legitimately have no end date. Added 2026-08-24. |
 | Checkover__c | Checkover | Text(1300) | No | Formula: `if(and(not(isblank(Staff__r.Termination_Date__c )),TEXT(Status__c)="active"),"Check", if(and(not(...` |
 | Corp_Name__c | Corp Name | Text(1300) | No | Sourced from Staff Corp Name field |
 | Cost__c | Cost | Currency | No | — |

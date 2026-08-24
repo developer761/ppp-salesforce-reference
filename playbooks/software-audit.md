@@ -75,10 +75,199 @@ The formula returns `"Check"` when any of the following are true:
 | Terminated employee — active SW record | **Flag only.** No action until leadership confirms offboarding. |
 | Terminated employee — active allocation | **Flag only.** Same hold. |
 | Missing End Date on non-employee SW record | Add an end date (contract renewal or fiscal year end) |
-| Active SW with past End Date | Update status to Expired or investigate |
+| Active SW with past End Date | **Read End Date with Status, never alone** — see "Expired vs removed" below. Usually a lapsed contract, not a departure. |
 | Blank Start Date or Cost | Fill in or investigate |
 | Monthly amount ≠ Allocated_Cost | Check for mid-month timing (see allocation section); update if genuinely wrong |
 | Blank Bill To Corp on Non-Employee allocation | Expected — no corp to bill for pooled licenses |
+
+---
+
+## Link every record the audit names
+
+Any record named in an audit deliverable should be a deep link to that record. An unlinked
+record name is a copy-paste-into-search round trip, paid once per row, by the reviewer, every
+time the deliverable is produced. Scope it to the sections a human actually works through —
+links on bulk data tabs are noise.
+
+Plumbing this means carrying the record id through to the output: select `Id` in every query
+that feeds a findings section, and have the comparison step return an identifier→id map
+alongside its results. Build links through one helper that **falls back to plain text when the
+id is missing**, so a failed lookup degrades gracefully instead of emitting a dead link.
+
+**Verify the links; do not trust them.** After generating, query the ids back and assert each
+link's text matches the record it targets. A mis-targeted link is worse than no link — the
+reviewer acts on the wrong record and nothing looks broken. The two failure modes to watch for
+both occur in *hand-written* prose rather than generated output:
+
+- an **id invented from memory** — the link 404s, which at least announces itself
+- a **record name invented** next to a correct id — the link resolves but names a different
+  record; this one is silent and far more dangerous
+
+Never hand-type a record id or name into a deliverable. Query it, then paste it.
+
+⚠️ **Watch the loop variable.** If findings are grouped by system or category in an outer loop,
+do not rebind that variable when wrapping it in a link inside an inner loop — it corrupts every
+later iteration. Append the linked string to a list instead.
+
+---
+
+## Different addresses on different platforms are normal — not typos
+
+One person can legitimately hold different addresses on different systems. **Only flag an address
+when it does not match the one that service actually uses.** An address that merely differs from the
+person's other records is not evidence of anything.
+
+The case that makes this concrete: a directory provider once enforced a **minimum last-name length**,
+so accounts with short surnames were created under a padded spelling. The person then has both forms
+live — the padded one as the account primary, the short one as an alias — and each downstream system
+holds whichever was used when its account was made. Nothing is misspelled.
+
+**Resolve the address on the platform before judging it.** Directory tooling that resolves an alias
+to its primary (`gam info user <address>` for Google Workspace) settles it in one call. Records whose
+seats are provisioned as CRM users take the CRM user's address; records on the directory platform
+take the directory primary.
+
+In the worked case only **one** of six records was actually wrong — an e-signature record carrying the
+directory-primary form for a service whose seats are CRM users, while its sibling document-generation
+record on the same staff already used the correct form.
+
+⚠️ **Do not fix this by teaching the matcher to treat the two forms as equivalent.** A global alias
+rule suppresses the genuine per-service mismatch along with the false one. The per-service
+cross-reference is already the right instrument: a gap reported for one service and not another is
+the signal, not noise.
+
+---
+
+## Reconstructing cost history from the records
+
+Per-person monthly cost can be rebuilt from the licence records alone — sum each record whose date
+range covers the month — but only under conditions worth checking before relying on it.
+
+**It requires generational cost changes.** A new contract term must create a NEW record with its own
+dates and cost, so the previous cost stays attached to the months it applied to. An in-place edit to
+a cost field silently rewrites history for every past month. Check whether field history is tracked
+before assuming an edit could be reconstructed — an object can have history enabled while tracking
+**no fields**, which logs record creation and nothing else.
+
+**It reads records of every status, so their end dates must be right.** This is where an
+Active-only audit filter becomes dangerous: a deactivated record carrying a future end date keeps
+contributing cost forever, and an audit that only inspects active records can never see it. If the
+checkover logic has branches for non-active records, the query feeding it must not filter them out.
+
+### Two conventions to fix before the numbers mean anything
+
+**1. Contract boundaries.** When one term ends the same day the next begins, both records cover that
+day — double-counting it, and the whole month under full-month proration. Fix it by **anchoring to
+the invoice**: the new term starts on the invoiced date, and the *previous* record's end date is
+pulled back to the day before. Adjust the derived value, not the documented one.
+
+**2. Mid-month starts.** Decide once and apply everywhere. Day-count proration
+(`cost × days covered ÷ days in month`) is the standard vendor-side formula and is the better
+default when the calculation is automated. Full-month is defensible if round numbers that reconcile
+to invoices matter more.
+
+⚠️ **There is no industry standard for internal chargeback timing.** TBM specifies allocation
+*methods* and is silent on mid-month proration — it is a policy choice. What matters is that one
+choice is applied uniformly; the failure mode is several conventions coexisting undocumented.
+
+⚠️ **Do not pick the convention that best matches your stored figures.** If stored values are flat
+monthly amounts, full-month proration will always "agree" more — that measures conformity with the
+existing inconsistency, not correctness.
+
+### Set a trust floor
+
+Reconstruction reaches as far back as records exist, which is usually further than the data
+deserves. Where earlier figures were imported from manually-maintained spreadsheets, declare the
+earliest trustworthy fiscal year, warn below it, and do not spend effort correcting data beneath
+that line.
+
+---
+
+## Commitment shape decides whether a blank End Date is a gap
+
+An end date is not universally required. Whether its absence is a data gap depends on how the
+licence is *committed*, which is a different axis from how often it is billed:
+
+| Shape | End date | Why |
+|---|---|---|
+| Monthly billed, **on contract** | required | there is a term, and it ends |
+| Monthly billed, **no contract** | **not required** | month-to-month, cancel any time |
+| **Annual** | required | there is a term |
+| **Free** | **not required** | nothing committed |
+
+Record this on a dedicated picklist field. Do **not** infer it from free-text notes, and do not
+hardcode product names into the checkover formula — a formula that names products has to be edited
+every time a new product arrives, and each edit is a chance to break the branch.
+
+⚠️ **Cost normalisation hides billing frequency.** Where per-seat cost is stored monthly-normalised
+(so annual products are divided down), annual and monthly-on-contract licences look identical in the
+data. The shape cannot be derived after the fact — it has to be captured.
+
+### Free-text exemptions are a trap worth naming
+
+A request of the form *"exempt it when the notes say X"* fails three ways at once, and it is worth
+checking all three before agreeing to build it:
+
+1. **The field may not be referenceable.** Long text areas cannot be used in formula fields at all —
+   check the field's type and length before designing around it.
+2. **Substring matching is case-sensitive** in most formula languages, so `CONTAINS` on a lowercase
+   literal misses the capitalised spelling.
+3. **It only catches the records phrased that way.** In the case that prompted this, one of the two
+   affected records used the wording and the other did not, so the rule would have fixed half the
+   problem and looked like it worked.
+
+### Deploy the formula before the backfill
+
+When a formula gains a clause referencing a **new, empty** field, deploying it first is a provable
+no-op: every new clause evaluates false, so behaviour is unchanged. Verify that — compare the
+formula's output on every record before and after; the count of changed records should be zero. Then
+backfill, and confirm that only the intended records flipped.
+
+This separates a schema change from a data change, so if something moves you know which one did it.
+Sequencing them the other way leaves nothing to isolate against.
+
+### Watch for redundancy, but do not clean it up in the same pass
+
+Once the field exists, product-specific exemptions already in the formula become redundant. Leave
+them until the backfill is verified complete — removing them in the same change means an incomplete
+backfill silently starts flagging every record they used to cover.
+
+---
+
+## Expired vs removed — End Date only means something alongside Status
+
+A software record's end-date field carries two different meanings, and which one applies is
+determined by the status field. Reading the date on its own is how a lapsed vendor contract gets
+misread as a wave of departures — or how a real departure hides inside contract noise.
+
+| Status | What the End Date means | Shape in the data |
+|---|---|---|
+| Active | the **contract term** ends then | one shared date across every record of that type/license; start dates vary per person |
+| Deactivated | **that person** lost the seat on that date | dates all differ — they are individual removal dates |
+| Expired | the term ended; that whole generation is retired | one shared date, matching the Active generation it replaced |
+
+**The shape is the tell.** If every flagged record in a type/license group shares the same end
+date, it is a contract event. If the dates scatter, they are individual removals.
+
+### Contract generations
+
+Software records are **generational**: one record = one person, one license, **one contract term**.
+On renewal the existing generation is set to Expired and a **new generation of records is created**
+with the new term — records are not edited in place to extend them. A platform that has renewed
+several times accumulates many Expired records; one that has never renewed under this model has
+none, and its first flip has no precedent to copy.
+
+### Surface it as one line, not sixty
+
+Group these flags by (type, license, end date) rather than listing them per person. A lapsed
+contract affecting sixty seats is **one** finding that names the contract — sixty individual
+checkover lines bury the signal and say nothing about why. Reserve per-person lines for flags
+whose causes genuinely differ.
+
+Where renewals are handled by a person who is already in the loop, the audit does not need to
+predict or automate them. It only needs to say *"this looks expired"* clearly enough that the
+lapse can be tracked down — a look-ahead or auto-renewal mechanism is scope the process does not
+need and will drift out of date.
 
 ---
 
@@ -216,7 +405,20 @@ A user can hold a managed-package license through **four independent paths**. Qu
 
 **The decisive check is usage, not configuration.** Config tells you who *could* use the product; the package's own records tell you who *does*. Query the package's primary object grouped by `CreatedBy` (for an e-signature product, the envelope object) over a trailing window. A user with real activity holds a real license regardless of which access path grants it.
 
-> Worked example: an S-Sign cross-ref keyed on a single permission set flagged ~10 senior staff as "not on platform" every month. Widening to all four permission sets cleared most; the remainder were System Administrators with direct object access, confirmed as genuine users by their envelope-creation history. Zero were stale.
+> Worked example: an e-signature cross-ref keyed on a single permission set flagged ~10 senior staff as "not on platform" every month. Widening to all permission sets **plus the System Administrator profile** dropped that list from 10 to 1 — every one of the 10 was a false negative, confirmed by envelope-creation history. Zero were stale.
+
+**The narrow query was also hiding real findings.** After widening, the *other* direction of the
+cross-ref surfaced four genuine items that had been invisible: a shared service account with no
+software record, two people holding the license and actively using it with no record at all, and
+one record carrying a misspelled email address. A check that is too narrow does not just add
+noise — it suppresses signal, because the people it wrongly flags are the same people it never
+looks up correctly.
+
+⚠️ **When you measure a cross-ref change, replicate the pipeline's own email normalization.**
+Platform rosters and software records often differ by domain (`.net` vs `.com`) and the script
+normalizes both sides before comparing. A comparison that skips that step makes every person
+appear on *both* sides of the gap, which reads as the fix having made things dramatically worse.
+Compare against the normalized inputs, not the raw query results.
 
 ---
 
