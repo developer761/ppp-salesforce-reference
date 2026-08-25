@@ -138,25 +138,36 @@ the signal, not noise.
 
 ---
 
-## The current period is often governed by a different rule than closed periods
+## A period field holds that period's ACTUAL cost — so partial periods "mismatch" by design
 
-Where a validation or checkover formula pins the **current** month's allocation to a live roll-up
-("this month must equal what the software costs right now"), that rule and a proration standard will
-disagree in any month containing a mid-period change. The roll-up is a full-rate figure; proration
-is the actual.
+Where a period field is defined as *the actual cost incurred in that period*, a partial period
+legitimately holds a smaller figure than a full one. Meanwhile the roll-up a checkover formula
+compares it against is the **full rate** of currently-active items, and has no way to know the period
+was partial.
 
-Both can be right at once, as a policy: **the current period is a projection at the full rate;
-closed periods hold the prorated actual.** But that framing only works if something *rewrites the
-period once it closes* — otherwise the month keeps its full-rate value permanently and the history
-is quietly wrong.
+So in any period containing a mid-period change the two **must** differ, and the check fires. **That
+is a formula limitation, not a data error** — formula languages generally cannot aggregate child
+records across dates, so proration is not computable where the check lives.
 
-**So a monthly chore falls out of it:** on the first run after a period closes, recompute that
-period's field. If a rebuild deliberately stops short of the current month — which it should, since
-writing a prorated value there would flag every record — note explicitly that the skipped period is
-owed a rewrite later. A gap that is skipped for a good reason still needs an owner.
+### Classify, don't reshape the data
 
-The alternative is loosening the formula so the current period is not pinned to the roll-up. That is
-a metadata change with wider blast radius; decide it deliberately rather than drifting into it.
+The wrong instinct is to make the data satisfy the check — writing full-rate values, or inventing a
+ritual to rewrite periods around the constraint. The right move is to have the **audit** decide:
+recompute the period's prorated cost, and if the stored figure reproduces it, report the row as
+*explained — no action* rather than as an error. Return two lists, not one, and render them
+separately with the reasoning attached so a reviewer can see why a row was dismissed.
+
+⚠️ **A period reporting `0 explained / N genuine` is a signature, not a clean bill of health.** It
+means that period's values have never been written — nothing can be "explained" because the stored
+figures match neither the full rate nor the prorated cost. Compare against a period you know was
+rebuilt: if that one classifies almost everything as explained and the suspect one classifies nothing,
+the difference is the tell.
+
+### The one real constraint
+
+**Never write a prorated value into the period the check is currently policing.** Write it once the
+period closes — which, for a monthly process that runs on the 1st, is exactly when the run happens.
+No extra cadence is required; the timing falls out of the existing schedule.
 
 ---
 
