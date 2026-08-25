@@ -138,6 +138,32 @@ the signal, not noise.
 
 ---
 
+## ⚠️ Period fields named by month carry no year — the record's span supplies it
+
+Where an allocation object stores twelve month columns (`January` … `December`) rather than dated
+rows, **the year is not in the field name.** It comes from the record's own start/end span. The same
+`February` column means February 2025 on one record and February 2026 on another.
+
+**Three rules follow:**
+
+- Match every period to the record whose span covers it before reading *or* writing. Writing a current
+  figure into a prior-year record's column silently rewrites history and reports success.
+- Never sum a month column across a person's records without filtering by span — that adds years
+  together.
+- A record whose span has ended still holds values in columns outside it. Those are stale leftovers
+  belonging to no period. **Leave them alone.**
+
+⚠️ **A completeness check will flag those leftovers as "cells the rebuild missed."** They are not
+missed — they belong to a different year, and "fixing" them destroys prior-year data. Before treating
+a skipped cell as a gap, check which period its record actually covers.
+
+**Corollary:** when a person's allocation span ends but their licences keep running, the months after
+the end date hold cost with nothing to carry it. Either extend the span or end the licences — and note
+that clearing the end date is the right move when the spend genuinely continues, since it puts those
+months back in period.
+
+---
+
 ## A period field holds that period's ACTUAL cost — so partial periods "mismatch" by design
 
 Where a period field is defined as *the actual cost incurred in that period*, a partial period
