@@ -713,3 +713,47 @@ else — which is exactly the case for a sheet a colleague maintains. A broad dr
 past attempt concluded "this can only create documents, not edit them," re-check the token's current
 scopes before designing around that limitation; scope sets change when other features are added, and
 the conclusion goes stale silently.
+
+### Deactivated-account name suffixes must not reach user-facing output
+
+Orgs commonly mark a deactivated or duplicate login by appending a marker to the user's name —
+`-inactive`, `-portal`, or similar. Two consequences, opposite in sign.
+
+The **useful** one: it makes short-name matching tractable. A roster written by hand uses first names
+and initials, and matching those to full user names collides constantly — until you filter candidates
+to *active* users first, at which point the collisions disappear because every duplicate carries a
+suffix. Without that filter a real roster produced six ambiguous names; with it, none. Be careful
+even so, since two different people may genuinely share a first name.
+
+The **damaging** one: resolving someone who has *left* lands on the suffixed record, so the name you
+write out reads `Firstname Lastname-inactive`. Strip the suffix at the boundary of anything a person
+will read.
+It is an administrative convention, not part of anyone's name.
+
+### Derive a column range from the start of the block it belongs to, not from your target
+
+A grid where labels occupy the left columns and one value-per-period occupies the right invites this
+bug: to read the labels, take "everything left of the column I'm writing." That works for the
+period nearest the labels and silently breaks for every later one — writing the seventh period
+sweeps up the six earlier value columns and treats them as labels. Numbers then get matched as if
+they were names, and the resulting count is wrong in a way that looks plausible.
+
+Take the range from the **first** period column, which is a property of the block, rather than from
+the target column, which changes every run. Treat cells beginning with a marker character as
+annotations rather than data.
+
+### A hand-maintained roster overwrites its own history
+
+Worth separating from the "live counts can't reconstruct a past month" limit above, because it bites
+even when your data source *is* historical. In a sheet where each row lists the people currently
+holding some slot, those name cells are **edited in place** as people join and leave. Last February's
+column was computed against February's names, which no longer exist anywhere.
+
+So a per-person historical recomputation reproduces the recent past well and the distant past badly,
+and the discrepancy grows with age — which reads like a bug in the matching logic when it is really
+the roster having moved. Validate against the **most recently completed period only**; a poor score
+across older periods is expected and is not evidence the rule is wrong.
+
+One related convention worth recognising rather than fighting: in such a sheet the name usually
+**stays in the cell** after the person leaves, and it is the *count* that drops to zero. Reading the
+name cell as "this person is current" gets the arithmetic wrong.
