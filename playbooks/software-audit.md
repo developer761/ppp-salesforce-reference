@@ -414,6 +414,34 @@ Salesforce users may be set up with `.com` or `.net` email variants; SW records 
 
 ---
 
+## A credential failure must never be silent
+
+A bare `except: pass` around an API call turns an expired credential into a permanent, invisible
+downgrade. In one case an offboarding-ticket lookup used to suggest removal dates sat behind exactly
+that, and a dead token meant **every** suggestion fell through to "not found" — for months, with no
+error, and output that still looked reasonable. The message was read as a finding about the data
+rather than a symptom of a broken credential.
+
+**Print a reason on every failed call**, including which credential failed and what degrades as a
+result.
+
+## Before maintaining a script-owned credential, check whether anything headless actually runs
+
+A script that writes to a ticketing system usually needs its own token *because a scheduler runs it
+unattended*. If there is no scheduler — no cron entry, no launchd job, the runner script called by
+nothing — that justification is gone, and the credential is pure maintenance cost.
+
+The alternative is to let the script **produce** its output and have the interactive agent **push**
+it, using whatever integration the session already has. Note the hard constraint: **a standalone
+script cannot call an MCP server** — that lives in the agent's session, not in the process. So the
+split is: script writes files to disk and prints the exact prompt for pushing them; agent does the
+API call.
+
+Make that the documented path rather than a workaround, and have the no-credential branch degrade
+loudly — write the output, name the file, state what was skipped.
+
+---
+
 ## Known platform gaps (do not flag as errors)
 
 | Platform | Gap | Notes |
