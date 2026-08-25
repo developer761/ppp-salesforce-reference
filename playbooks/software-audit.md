@@ -622,3 +622,94 @@ result is only meaningful if the rename path can still fire:
 `Type__c` and `License_Type__c` are **restricted picklists gated by the record's RecordType**. Inserting a record without the matching `RecordTypeId` fails with `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` — through the CLI *and* Apex. **Updates** to existing records don't need it (they inherit the RecordType). Set the RecordType that matches the platform Type (Slack, E-Document, Salesforce, Google, Dialpad, or Other) on every insert.
 
 **Non-billed external users** (external parties using PPP software without being invoiced): record their seats against the shared **Non-Employee** staff record at standard cost, so the consumption is tracked as an overage against that bucket rather than lost.
+
+---
+
+## Writing audit results back into a spreadsheet someone else maintains
+
+When the audit's numbers already have a home — a monthly sheet a stakeholder reads and reconciles —
+updating that sheet in place beats handing over a new export. The format they trust survives, and
+the double entry disappears. Three things make the difference between that working and quietly
+corrupting their file.
+
+### Count usage from the platform, not from the licence records
+
+An audit usually maintains its own licence records, and it is tempting to count those. Don't — not
+for a *usage* number. Those records carry **contract dates**, so a licence whose term lapses
+mid-month computes to **zero** at month end while the seats are plainly still in use. A renewal that
+extends a term to the 30th makes every 31st-of-the-month count read zero.
+
+Prefer, in order:
+
+1. **Org licence objects** — these carry purchased *and* consumed seats together, so allowed and
+   in-use come from one source that cannot disagree with itself.
+2. **Managed-package licence objects** — same, per package.
+3. **The vendor's own directory API** for anything with no in-org object.
+
+Only fall back to your own records where no platform source exists. The platforms have no notion of
+your contract calendar, so the contract can never corrupt a usage figure.
+
+Two traps in the licence objects themselves: an *allowed* value of **-1 means the package does not
+meter seats at all** — report that as unknown, never as zero, because the real number lives in the
+contract. And an allowed figure with no API behind it is a contract term; leave those cells alone
+rather than writing a guess.
+
+### A live count cannot reconstruct a past month
+
+This is the hard limit of the whole approach and it deserves an explicit guard, not a note in a
+runbook. A platform count is a snapshot of *right now*. Run the job in December to fill August and
+it will cheerfully stamp December's headcount into August's column, with no error and no way to
+tell afterwards.
+
+Encode the calendar as refusals:
+
+- target month has not closed → refuse
+- target is older than the month that just closed → refuse
+- run is more than about a week past month end → proceed, but warn that the figure has drifted
+
+Each refusal wants an override flag, because someone will eventually have a reason. What matters is
+that the default is refusal and the override is a deliberate keystroke. Backfilling anything older
+needs a historical source; this mode is not one.
+
+### Bound every row scan by its block — an overrun conceals itself
+
+A sheet tab often holds several stacked blocks: a header row naming the periods, some labelled
+metric rows, then a free-form list running down under one of them. Writing that list means scanning
+down a column — and a **fixed-width window is wrong**, because the list's length varies and the
+window will reach into the block below.
+
+What makes this worse than an ordinary off-by-one: the overrun blanks the *next* block's header row.
+If blocks are located by matching their header — which is the right way to do it, since it survives
+tab renames and shifted rows — then destroying a header makes that block **invisible to every
+subsequent run**. The job then reports success while silently writing half of what it should. The
+first run does the damage; every later run hides it.
+
+Two limits, and both are required:
+
+- stop at the next period-header row, and
+- stop at the next labelled row in the first column
+
+Neither alone suffices, because a header row's own first column is typically blank — so the
+label test walks straight past it into the following metric row.
+
+Also **blank the tail**. A list that is shorter this month than last leaves the previous run's
+entries sitting underneath it, and they read as part of this month's data.
+
+### Prove it on a copy, and diff the copy against the original
+
+Copy the file, point the code at the copy, run it, then **diff the copy against the original
+column by column**. Not "does it look right" — an actual cell-by-cell comparison, which is the only
+thing that surfaces a write outside the intended range. The overrun above was found exactly this
+way, and every difference the diff reported was either an intended write or a pre-existing
+difference in the copy; that is the standard to hold.
+
+Then verify every write by reading it back and comparing to the source. A spreadsheet write call
+returns success for values that were coerced, dropped, or landed somewhere unexpected.
+
+### Reaching a file the automation did not create
+
+An OAuth token scoped to only the files an app created cannot touch a document owned by someone
+else — which is exactly the case for a sheet a colleague maintains. A broad drive scope can. If a
+past attempt concluded "this can only create documents, not edit them," re-check the token's current
+scopes before designing around that limitation; scope sets change when other features are added, and
+the conclusion goes stale silently.
