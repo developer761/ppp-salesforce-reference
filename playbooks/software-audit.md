@@ -780,3 +780,23 @@ which is exactly when nobody is looking for a regression.
 Worth knowing separately: in Google Sheets, cell **notes are stored apart from cell values**, so a
 values-only write preserves them. That is a trap in both directions — annotations survive a rewrite
 that destroys the thing they annotate, leaving a note attached to an empty cell.
+
+### A changed value is not evidence that something changed in the world
+
+When a synced roster disagrees with the source, the temptation is to treat the difference as an event:
+the holder changed, so record the outgoing name as history. At the data level a **correction** and a
+**genuine handover** are the same diff — one value replaced by another — and nothing in the data
+distinguishes them.
+
+Accepting a spelling fix on a name therefore wrote the misspelling into the "previously assigned"
+column, presenting it as a former holder and displacing the person who actually held it before. The
+history column got worse, not better, and the loss was silent because the cell still looked populated
+and plausible.
+
+**Don't derive history from a diff.** Report the outgoing value and let the person who approved the
+change decide whether it belongs in the record. They already had to make that judgement to approve it;
+they are the only one who can.
+
+The general shape: an automation may state what it observed, but should not infer *why* the world looks
+different — particularly when the inference gets written somewhere durable and reads as fact
+afterwards.
