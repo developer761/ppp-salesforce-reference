@@ -757,3 +757,26 @@ across older periods is expected and is not evidence the rule is wrong.
 One related convention worth recognising rather than fighting: in such a sheet the name usually
 **stays in the cell** after the person leaves, and it is the *count* that drops to zero. Reading the
 name cell as "this person is current" gets the arithmetic wrong.
+
+### A column a person also edits must be merged, not rewritten
+
+Once automation and a human write to the same column, "compute the correct list and write it" becomes
+destructive. The person is not duplicating your work — they are adding what you **cannot compute**.
+
+The case worth generalising: a licence count moved by one because an assignment was revoked from an
+inactive account. That revocation lives in a different object from the one the change-detection query
+reads, so it produces no row there and never will — the automation is structurally blind to it, not
+merely out of date. The maintainer noticed the count move, understood why, and wrote the explanation
+into the adjacent list by hand. The next scheduled run computed a shorter list and blanked it.
+
+**Keep every entry already present; append only the computed entries that are missing.** The cost is
+that a stale entry is never auto-pruned. On a surface a person reviews, that is the cheaper failure —
+an extra line gets questioned, a deleted line does not.
+
+The tell that you are exposed: any logic that clears a range down to "however deep the old data went."
+That step is what turns a merge into a replace, and it only misbehaves once someone has edited by hand,
+which is exactly when nobody is looking for a regression.
+
+Worth knowing separately: in Google Sheets, cell **notes are stored apart from cell values**, so a
+values-only write preserves them. That is a trap in both directions — annotations survive a rewrite
+that destroys the thing they annotate, leaving a note attached to an empty cell.
