@@ -138,6 +138,47 @@ the signal, not noise.
 
 ---
 
+## The current period is often governed by a different rule than closed periods
+
+Where a validation or checkover formula pins the **current** month's allocation to a live roll-up
+("this month must equal what the software costs right now"), that rule and a proration standard will
+disagree in any month containing a mid-period change. The roll-up is a full-rate figure; proration
+is the actual.
+
+Both can be right at once, as a policy: **the current period is a projection at the full rate;
+closed periods hold the prorated actual.** But that framing only works if something *rewrites the
+period once it closes* — otherwise the month keeps its full-rate value permanently and the history
+is quietly wrong.
+
+**So a monthly chore falls out of it:** on the first run after a period closes, recompute that
+period's field. If a rebuild deliberately stops short of the current month — which it should, since
+writing a prorated value there would flag every record — note explicitly that the skipped period is
+owed a rewrite later. A gap that is skipped for a good reason still needs an owner.
+
+The alternative is loosening the formula so the current period is not pinned to the roll-up. That is
+a metadata change with wider blast radius; decide it deliberately rather than drifting into it.
+
+---
+
+## Two traps when writing allocation figures programmatically
+
+**Percent fields are not fractions outside formulas.** A platform may treat a percent field as a
+fraction *inside* its own formula language while storing `100` for 100%. Reproducing that formula in
+external code without dividing by 100 produces values 100× too large — and they look plausible enough
+to write. Verify against a **split** record (one at 50% should come out half) before any bulk update.
+
+**Allocation records are usually date-ranged and generational, like the licence records they mirror.**
+One person holds several covering different periods; a given month's figure is only meaningful on the
+record whose span covers that month.
+
+⚠️ **Filtering to "active" allocations is the same mistake as filtering the checkover to active
+licences.** Closed months live on *inactive* records, so an active-only query reads them as zero and
+reports large phantom gaps — in one case a full monthly cost, twice over, for a person whose records
+were entirely correct. Match each period to the record covering it, regardless of status. Correcting
+history means writing to inactive records, and that is expected rather than suspicious.
+
+---
+
 ## Reconstructing cost history from the records
 
 Per-person monthly cost can be rebuilt from the licence records alone — sum each record whose date
