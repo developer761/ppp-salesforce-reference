@@ -335,6 +335,54 @@ with the new term — records are not edited in place to extend them. A platform
 several times accumulates many Expired records; one that has never renewed under this model has
 none, and its first flip has no precedent to copy.
 
+### Running a generation flip
+
+The renewal itself is a three-step sequence, and the order is the safety property:
+
+1. **Update the cost-defaulting automation first**, if a create-triggered flow supplies `Cost__c`
+   from a hardcoded value. Changing it before the inserts means the new records land correct on
+   insert — no second corrective pass, and no window where half a batch carries the old rate. This
+   also removes the usual create-then-update workaround entirely.
+2. **Create the new generation, then verify, then expire the old one — in that order.** The dates
+   make the handoff clean regardless of execution order, so what the order actually decides is the
+   failure mode if the batch dies partway. Expiring first and failing leaves people with no active
+   licence records at all — indistinguishable from a departure wave, and exactly the shape the
+   coverage-gap check reports as an error. Creating first and failing leaves a visible temporary
+   double-count on the per-person cost roll-up: loud, obviously wrong, and fixed by finishing the
+   step. **Prefer the failure that announces itself.**
+3. **Capture the old record ids before inserting.** Once the new generation exists, old and new are
+   indistinguishable by (staff, type, licence) — the id list gathered beforehand is the only thing
+   that reliably addresses the outgoing generation.
+
+Verify the new generation against the old as a **multiset of (staff, licence)**, not as a count.
+Equal counts can hide a swapped pair; the multiset comparison cannot. Check the defaulted cost, term
+dates, status, record type, and carried-over fields in the same pass.
+
+### Deriving the per-seat rate from a renewal invoice
+
+Where per-seat cost is stored **monthly-normalised**, the rate for a new term is:
+
+    per-seat monthly = invoice total ÷ licensed seat count ÷ 12
+
+Two things decide whether this reproduces the figures already in the system:
+
+- **Divide by the seat count on the invoice, not by the number of people holding records.** These
+  differ whenever seats are bought with headroom, and dividing by holders inflates the rate so that
+  it silently recovers the unused seats. The unbought-headroom cost is meant to go unrecovered.
+- **Keep support and tax in the numerator.** Uplift lines (premier support at a percentage of
+  contract value) and sales tax are part of what the seat costs; stripping them produces a rate that
+  reconciles to nothing.
+
+**Verify the convention before applying it** by reconstructing the *previous* term's stored rate from
+the previous invoice. Reproducing the stored figure to the cent proves which divisor and which
+inclusions were actually used; guessing from one invoice cannot distinguish them. If the
+reconstruction misses, the convention is not what you assumed — resolve that before writing 90-odd
+records that bake it in for a year.
+
+Round only at the final step, and expect the rounded rate × seats × 12 to differ from the invoice by
+a small amount. That drift is inherent to storing a rounded monthly figure and is not an error to
+chase.
+
 ### Surface it as one line, not sixty
 
 Group these flags by (type, license, end date) rather than listing them per person. A lapsed

@@ -34,9 +34,12 @@ For a flow change that a second person should review against real production con
 effect, deploy it **as a Draft** rather than activating on deploy.
 
 - **Set `<status>Draft</status>` before deploying to prod.** Metadata retrieved from an org carries
-  `<status>Active</status>`; deploying that file as-is makes the change **live on arrival**. Flipping
-  it explicitly creates a new version alongside the running one that changes no behaviour until
-  somebody activates it in Setup.
+  `<status>Active</status>`; deploying that file as-is *may* make the change **live on arrival**.
+  Flipping it explicitly creates a new version alongside the running one that changes no behaviour
+  until somebody activates it in Setup. ⚠️ The converse does **not** hold — an `Active` status in the
+  XML does not guarantee activation, and in an org without the activation setting it lands as Draft
+  regardless. See the next section. Set the status you want either way and **verify the result**;
+  never infer what happened from what the file said.
 - **This makes rollback free.** Reverting is re-activating the prior version from the flow's version
   list — instant, no deploy, no metadata round-trip. Keep the pre-change XML as a backup anyway, but
   it is the second line of defence, not the first.
@@ -53,6 +56,77 @@ effect, deploy it **as a Draft** rather than activating on deploy.
 Validate the same way as any other component: `sf project deploy start --dry-run` first, then deploy,
 then read the version list back and confirm the intended version is Draft and the prior one is still
 Active.
+
+## A production deploy can land as Draft even when the XML says Active
+
+**`Status: Succeeded` on a flow deploy does not mean the flow is running.** Production will not
+activate a deployed flow unless the org has the *deploy processes and flows as active* preference
+enabled **and** the flow meets the test-coverage requirement. Where either is missing, the deploy
+reports success, creates the new version, and leaves it **Draft** with the previous version still
+Active. Nothing in the deploy output says so.
+
+This is the quiet failure mode of the whole procedure: the change is deployed, the CLI says it
+worked, and the old logic is still the one running. Every downstream step then reads as correct
+while operating on stale behaviour.
+
+- **Always read the version list back after deploying** — not the deploy result. Query
+  `Flow` via the Tooling API filtered on `Definition.DeveloperName`, ordered by `VersionNumber`
+  descending, and confirm which version actually holds `Status = 'Active'`.
+- **Activate explicitly with a `FlowDefinition`.** Deploy a second component containing only
+  `<activeVersionNumber>N</activeVersionNumber>` for the version you want live. This is a separate
+  deploy from the flow itself and is the supported way to activate without opening Setup.
+- **Then verify a third time by re-retrieving the flow from the target org** and diffing it against
+  the pre-change backup. Confirm the intended change is present *and* that it is the only
+  difference — a retrieve returns the active version, so this proves what is actually running rather
+  than what was sent.
+- **Sequence matters when a create-triggered flow supplies a field value.** If records are inserted
+  between the flow deploy and its activation, the *old* version stamps them. Activate and verify
+  before any batch that depends on the new behaviour, or the batch has to be corrected afterwards.
+
+The three-step shape — deploy, activate, re-retrieve and diff — costs about a minute and is the only
+way to distinguish "deployed" from "running".
+
+## Back up an Apex class before you deploy over it
+
+**Salesforce does not version Apex class bodies.** Unlike a Flow, which keeps every version and lets
+you re-activate a prior one from Setup, an `ApexClass` has a single body that a deploy overwrites in
+place. There is no prior version to retrieve, no org-side history, and nothing in the deployment
+record that reproduces what was there before. Once both sandbox and production hold the new version,
+the original is gone unless it was captured somewhere first.
+
+- **Capture the current body before deploying**, even for a change you are confident in, and even
+  when the class is small. `sf project retrieve start --metadata ApexClass:TheClass` into a location
+  *outside* the package directory, or commit the package directory to git before the first edit. A
+  source-tracked package directory that was never committed provides no rollback.
+- **Do not assume the sandbox copy is a backup.** A sandbox that received the change first holds the
+  *new* version too. Check `LengthWithoutComments` in both orgs before relying on either.
+
+### Reconstructing a class body that was not captured
+
+If the original is already gone, it can be reconstructed when the change was strictly additive —
+but only verifiably so. `ApexClass.LengthWithoutComments` (Tooling API) is the handle:
+
+1. **Positive control first.** Write a comment-stripper and run it against the *current* class. It
+   must reproduce that class's `LengthWithoutComments` exactly before you trust it on anything else.
+   The rule is: strip `//` and `/* */` comments (respecting string literals), then drop blank lines.
+2. Remove the additions from a copy of the current source and measure. Hitting the original's
+   recorded `LengthWithoutComments` exactly is strong evidence the code is byte-identical.
+3. **Know the boundary.** An exact length match proves the non-comment character *count* matches; it
+   does not prove comment text was identical, and it is not a compile check. Record both limits
+   alongside the artifact so a later reader does not over-trust it.
+
+### A restored original is not automatically the safe rollback
+
+Check what the new version added before reaching for the old source. If the change widened a
+condition so that records missed on one run are picked up on a later one, restoring the original
+narrows it again — and anything the new logic deliberately deferred is then stranded permanently,
+because the original never had the catch-up path that would release it.
+
+Where a change is gated behind a feature flag, **switching the flag off is usually the better
+rollback than restoring the source**: it exercises a code path that was written and tested with the
+deferred records in mind. Design the flag so the catch-up path keys off *scope*, not off the enabled
+flag — otherwise turning the gate off closes the very window that releases what it held, and the off
+switch becomes the failure it was meant to undo.
 
 ## Porting a single component into sandbox
 

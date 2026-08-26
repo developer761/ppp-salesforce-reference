@@ -499,6 +499,32 @@ entire check; the real failure count was 25, not 1.
 Re-run the guards **after** the upload as well. A bulk job's success count means rows were accepted, not that
 the values persisted or that downstream automation left them alone.
 
+## Reusing the clean-up script as a measurement oracle
+
+Once a continuous integration starts doing part of what a batch clean-up does, the question becomes
+"how much would the batch still change?" The temptation is to re-implement the batch's decision
+logic inside the comparison tool. Don't — that is a further copy of rules that already exist, and
+copies drift. Run the batch script itself over the same window and read what it proposes; anything
+it proposes on a record the continuous process already saw is the residual.
+
+Two things make that safe and meaningful:
+
+- **Confirm the batch script is actually read-only before calling a run "measurement".** A batch
+  clean-up may perform a preparatory *write* before its main read — backfilling a missing lookup so
+  the main pull is complete, for example. Gate that behind a flag, set the flag off, and then
+  **assert it took effect** by checking the run's own output for the phase's announcement. An env
+  var you assumed took hold is how a measurement run silently writes to production.
+- **Split the result by whether the continuous process owns the field at all.** "Fields it writes
+  and got wrong" and "fields it does not write yet" are different problems with different owners,
+  and a single combined number hides which one you have. Re-classify a field from the second bucket
+  to the first as it ships.
+
+Report the residual **by change-shape, not by row**. The first run of one such harness showed 115
+apparent disagreements on fields the continuous process already owned — but 109 of them were a
+single shape (one source with a blank medium, defaulting to the paid-click value). That is not 115
+problems; it is one missing rule and six stragglers. A raw count would have argued for a large
+programme of work where one rule was needed.
+
 ## Gotchas
 
 - **Inactive service territories route to Out of Area** — leads can exist in SF under a service territory that has since been deactivated. Because inactive STs are excluded from the zip code → territory mapping, those leads will never receive a valid ACD for their original territory. The script detects this at runtime by querying `ServiceTerritory WHERE IsActive = false` and automatically reroutes any such lead to the Out of Area territory and its corresponding ACD. The `*NEW ST` column is populated so the territory is corrected on upload.
