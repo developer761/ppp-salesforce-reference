@@ -127,6 +127,51 @@ $16,000 on one WO). Testing on a single record will not reveal this.
 - **`Opportunity.LeadGroup__c`** *(self-gen bucket, updated 2026-05-21)*: `LeadGroup__c` ∈ {`'Self-Generated'`, `'Trade Show'`, `'Repeat'`, `'Referral'`} → **self-gen**; **every other value (and null) → marketing** (so self-gen + marketing always reconciles to the total).
 - The previously-flagged split is now in effect: `Repeat`, `Referral`, and `Trade Show` are counted as **self-gen** (relationship/earned leads), no longer marketing.
 
+## ⚠️ Bulk Lead updates — what fires, and what doesn't
+
+Re-saving Leads in bulk (backfills, imports, mass field updates) runs every active Lead automation.
+Audited against production 2026-08-25.
+
+**Does NOT fire on an update — safe:**
+
+| Automation | Why |
+|---|---|
+| `LEAD_Auto_Assigment` (`assignTargetToSalesCadence`) | Create-only |
+| `Lead_NotifyMetaLeadCreated` (`emailAlert`) | Create-only |
+| `LEAD_Update_Cadence_Assignee` (`changeSalesCadenceTargetAssignee`) | triggers on **AgentWork**, not Lead |
+| `Lead_SetAdCostDetail` | `doesRequireRecordChangedToMeetCriteria = true` — fires only when a record *newly* meets its gate (`LeadGroup__c` set, `AdCostDetail__c` null, `ServiceTerritory__c` set) |
+| `Lead_AdCostDetailUpdate` | `filterFormula` requires `AdCostDetail__c` to actually change |
+
+Those last two gates are load-bearing: **manually corrected ad-cost-detail assignments survive a bulk
+re-save untouched.** Confirm they are still gated before trusting that on any future backfill.
+
+**Fires, but harmless:** the other active record-triggered Lead flows that run on update have **zero
+action calls** between them — pure field-setters, no email/SMS/callout/cadence enrolment.
+
+**⚠️ One real side effect.** `LeadTrigger` → `LeadTriggerHandler.beforeUpdate` calls
+`LeadService.enforceTwoLetterState`, which silently rewrites any non-two-letter `State` value on
+every re-saved record. Count that population before a large backfill rather than discovering it after.
+The same path calls `addErrorOnConversionWhenMissingRequiredFields`, so use
+`Database.update(records, false)` for partial success instead of all-or-nothing.
+
+**⚠️ Do not classify these flows by name prefix.** The `LEAD_` / `Lead_` prefix is a naming
+convention, not the trigger object — at least one `LEAD_`-prefixed flow triggers on a different
+object entirely. Read `<object>` inside `<start>` in the flow metadata. An inventory grouped by name
+will mis-state the blast radius of a bulk operation.
+
+### Before-save flows and where a field's value comes from
+
+A before-save flow runs **ahead of** before-triggers, so it sees values that arrive on the **insert
+payload** but not values written by Apex. Whether a derived-value flow can be before-save (cheap, no
+extra DML) or must be after-save therefore depends on what populates its source field.
+
+Worked example: `Lead.AdSetName__c` is referenced by no Apex class and no flow — it arrives on the
+payload from the web-to-lead site endpoint and from bulk loads. A before-save flow can read it.
+By contrast `Lead.Lead_Gen_Category__c` **is** Apex-written: `LeadIncomingProcessor` maps the lead
+vendor's own category string into it on insert for the Angi and HomeAdvisor paths, which is why that
+field is heavily populated for those sources and empty for others. Any automation writing to it
+should guard on the field being blank so vendor-supplied values are never overwritten.
+
 ## Call Center hours
 
 - **Mon–Fri:** 9am – 8pm ET

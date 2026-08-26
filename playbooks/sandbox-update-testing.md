@@ -28,6 +28,32 @@ Reusable workflow for validating managed-package upgrades and config changes in 
 - **Flow-deploy-to-Draft quirk** — after deploying a flow, verify the active version; it can land in Draft and silently stop firing.
 - **Subagent fan-out** — the validation areas are independent, so running them as parallel agents (one per area, each returning a health verdict) is efficient and keeps the evidence separated by concern.
 
+## Shipping a flow change to production as an inactive Draft
+
+For a flow change that a second person should review against real production config before it takes
+effect, deploy it **as a Draft** rather than activating on deploy.
+
+- **Set `<status>Draft</status>` before deploying to prod.** Metadata retrieved from an org carries
+  `<status>Active</status>`; deploying that file as-is makes the change **live on arrival**. Flipping
+  it explicitly creates a new version alongside the running one that changes no behaviour until
+  somebody activates it in Setup.
+- **This makes rollback free.** Reverting is re-activating the prior version from the flow's version
+  list — instant, no deploy, no metadata round-trip. Keep the pre-change XML as a backup anyway, but
+  it is the second line of defence, not the first.
+- **Nothing happens until activation.** Any data backfill whose values are produced *by* the flow
+  must run **after** activation. Running it against the old active version silently does nothing and
+  the work has to be repeated.
+- **Flow version numbers are per-org and do not correspond.** Sandbox and production routinely hold
+  byte-identical definitions at different version numbers, because each org increments on its own
+  edit history. **Diff the XML to establish parity; never infer it from the version number.**
+- **Keep backup copies out of the package directory.** Every file under `force-app/` is a component
+  to the deploy. A sibling backup such as `X.flow-meta.xml.orig` is picked up as a *second* Flow
+  component and the deploy fails with a source conflict that names the backup, not the real file.
+
+Validate the same way as any other component: `sf project deploy start --dry-run` first, then deploy,
+then read the version list back and confirm the intended version is Draft and the prior one is still
+Active.
+
 ## Porting a single component into sandbox
 
 Backfilling one component (a validation rule, a flow, a field) so the orgs match is a smaller job than
