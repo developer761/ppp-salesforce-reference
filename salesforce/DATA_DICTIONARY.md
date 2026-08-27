@@ -679,6 +679,7 @@
 | LegacyProjectNumber__c | Legacy Project Number | Text(25) | No | — |
 | Materials_Included__c | Materials Included | Checkbox | Yes | — |
 | MaterialType__c | Material Type | Picklist | No | — |
+| Product_Lines__c | Product Lines | Text Area(255) | No | Paint product lines chosen in the Command Center, written as `Interior: <line> \| Exterior: <line>`. Added 2026-08-27 so the hub stops writing `MaterialType__c` — see the MaterialType__c note. |
 | Name__c | Name | Text(255) | No | — |
 | NetValue__c | Net Value | Formula (Currency) | No | Formula: `Quoted_Subtotal_with_Change_Order__c - TotalNonBillablePurchases__c - TotalReferralPayouts__c - T...` |
 | Opportunity__c | Opportunity | Lookup(Opportunity) | No | — |
@@ -850,6 +851,23 @@
 > `WorkOrder.MaterialType__c` as an estimate-time value with an upstream owner — a system writing to
 > it is overwriting the estimator, not filling a gap.
 >
+> **It is one Global Value Set, not three fields with matching values** (verified 2026-08-27). Quote,
+> QuoteLineItem and WorkOrder all draw from a value set named `MaterialType`, so adding or deactivating
+> a value once changes all three. Field *type* is still per-field.
+>
+> **The header field is filled by a human, not by automation** (verified 2026-08-27). There is no
+> default value and it is not required; it is an optional screen input on both quote-creation screens.
+> Fill rate is **bimodal by user** — roughly a third of estimators fill it on 92–99% of their quotes and
+> a similar number essentially never do, which is a per-person habit rather than anything a default
+> could produce. Overall fill is ~42% of quotes and ~49% of non-appointment work orders. When it is
+> filled it agrees with the job's interior/exterior scope ~95%+ of the time. **Treat a populated value
+> as a deliberate answer.**
+>
+> **Nothing outside flows and layouts reads it** (swept 2026-08-27): 0 of ~3,400 Apex classes, 0 of ~190
+> triggers, 0 validation rules, 0 formula fields, and 0 flow decisions or filters reference it. Every
+> flow usage is a field-to-field assignment or an automatic screen field. Reports and list views are the
+> one surface the dependency API does not track reliably.
+>
 > **Two consequences for anything writing here.** The picklist is restricted, so a value outside the
 > ten above is rejected with `INVALID_OR_NULL_FOR_RESTRICTED_PICKLIST` — and because Salesforce DML
 > is all-or-nothing, one bad value fails every other field in the same update. And the field holds
@@ -857,6 +875,16 @@
 > represent that here; keep it on your own side and treat this as a read.
 
 ---
+
+> #### `WorkOrderLineItem.Interior_Exterior__c` looks like a scope signal and is not
+>
+> The field exists and is referenced by the change-order flows, but it is **100% null** — 2,224 of
+> 2,224 line items across a 90-day sample (measured 2026-08-27). Anything needing to know whether a
+> line is interior or exterior has to derive it from `ProductName__c` or the WorkType, not from here.
+> Note the WorkType is itself unreliable for this: on a 300-record sample it disagreed with every line
+> item 55% of the time. Only about **4% of non-appointment work orders carry both interior and
+> exterior line items.**
+
 
 ## Task — Custom Fields
 
