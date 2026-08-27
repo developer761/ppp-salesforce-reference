@@ -377,6 +377,14 @@ has been renamed — a carve-out matching the old trading name quietly matches n
   filtered nor counted in SOQL.
 - **SOQL cannot compare two fields to each other** (e.g. work order owner ≠ opportunity owner) — fetch
   both and compare client-side.
+- **`CreatedDate = LAST_N_MONTHS:n` is a BOUNDED range that ends on the last day of the *previous*
+  month — it excludes the current month entirely.** On a field whose history tracking was switched on
+  earlier the same month, every row sits in the excluded window and the query returns **0**. That reads
+  as "no data" rather than as an error, so a report built on it can state "no history yet" indefinitely
+  while the rows sit there. Use `LAST_N_DAYS:365` for a rolling year, or `>= LAST_N_MONTHS:n`, which is
+  open-ended and does include the current month. The `=` / `>=` distinction is the whole trap.
+- **Positive-control every zero from a date-filtered history query.** Re-run without the date filter
+  before believing it. An empty result proves the filter matched nothing, not that nothing happened.
 
 ## ⚠️ AM role reassignment — scope, the picklist trap, and what fires
 
