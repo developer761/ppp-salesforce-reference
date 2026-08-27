@@ -364,6 +364,32 @@ field: a new user with it blank or misspelled is silently *not* carved out, and 
 the matching string silently *is*. Profile names are controlled values. This matters most where an entity
 has been renamed — a carve-out matching the old trading name quietly matches nobody.
 
+## ⚠️ Text-FORMULA fields that look Boolean
+
+A formula field whose return type is Text can produce the literal strings `'TRUE'` and `'FALSE'`. It
+reads as a checkbox in every UI and in most people's mental model, and it is not one. There is no
+blank state — every record holds one string or the other.
+
+Three consequences, two of them silent:
+
+- **SOQL rejects `= true`** on it: *"value of filter criterion must be of type string and should be
+  enclosed in quotes."* Quote the literal instead: `WHERE <field> = 'TRUE'`.
+- **It cannot be grouped.** `GROUP BY` on it errors outright — the one loud failure, and useful: a
+  "distribution of values" query fails rather than quietly returning something wrong.
+- **`'FALSE'` is TRUTHY.** In Python, in Apex string contexts, and in most Flow text comparisons, a
+  bare `if field:` treats *every* record as true. Compare to the literal, case-insensitively.
+
+The same family as the `ISNULL()` trap above: both are a Text field wearing another type's clothes.
+A guard that tested a text-formula field for truthiness silently suppressed a check whose real count
+was 25.
+
+**Compound conditions are where this actually bites.** When such a flag is one of several `AND`
+conditions — the flag, plus a related lookup, plus a code on the owner's User record — a blank in
+*any* of the others makes the whole branch False, and the record falls through to the next branch
+rather than erroring. Measured on one such rule: 43 of 974 flagged records had a blank owner code and
+silently took the wrong branch. **Prefer flagging over falling through**: if the primary condition is
+true but a supporting field is missing, that is an exception worth surfacing, not a default.
+
 ## SOQL / CLI traps
 
 - **`sf data query` silently caps at 50,000 rows, and under `--json` there is no warning at all.** The
