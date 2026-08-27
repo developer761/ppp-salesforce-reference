@@ -936,7 +936,7 @@
 
 | API Name | Label | Data Type | Required | Description |
 |----------|-------|-----------|----------|-------------|
-| AM_Services__c | AM Services | Picklist | No | — |
+| AM_Services__c | AM Services | Picklist | No | Hatch follow-up **enrollment switch**, read off the Opportunity *Owner*. Values `None` / `Coordination` / `Followups` / `All`; only `Followups` and `All` enroll. Despite the label it does not describe AM duties — see BUSINESS_RULES.md § AM role reassignment. |
 | Assigned_ST_Unique_Code__c | Assigned ST Unique Code | Text(50) | No | — |
 | Email__c | Email | Text(1300) | No | Formula: `Email` |
 | Estimate_Custom_Notes__c | Estimate Custom Notes | Text Area(32768) | No | — |

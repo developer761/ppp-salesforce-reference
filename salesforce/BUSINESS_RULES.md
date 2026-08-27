@@ -377,3 +377,46 @@ has been renamed — a carve-out matching the old trading name quietly matches n
   filtered nor counted in SOQL.
 - **SOQL cannot compare two fields to each other** (e.g. work order owner ≠ opportunity owner) — fetch
   both and compare client-side.
+
+## ⚠️ AM role reassignment — scope, the picklist trap, and what fires
+
+Moving an Account Manager (or Project Manager / Estimator / Partner Manager) from one person to
+another across a rep's book. Distinct from an **owner** change, which must go through the Account's
+"Reassign Records" button so Work Orders and Service Appointments cascade.
+
+**`User.AM_Services__c` is an enrollment switch, not a job description.** The active Opportunity flow
+that enrolls quotes into the Hatch follow-up campaign gates first on
+`Owner.AM_Services__c IN ('Followups','All')`. Fail that gate and the flow dead-ends: the campaign
+field is never stamped and the rep's automated follow-ups stop entirely. So a request of the form
+*"the new AM handles coordination but not follow-ups"* resolves to leaving the value on `All` —
+selecting `Coordination` reads correctly and silently breaks the follow-ups. Never pick a value for
+this field from its label; find the consumers first.
+
+**What removes an opp from an AM follow-up report is the Hatch campaign field, not `AM_Services__c`.**
+The live AM follow-up reports AND-filter unconditionally on campaign = blank or `AM F/U`, so an opp
+enrolled in Hatch is already excluded. Their `AM_Services__c` filter reads the **Opportunity Owner**,
+not the Account Manager.
+
+**Scope is two disjoint sets.** `IsClosed = false` is not the whole job — active Work Orders sit on
+**Closed Won** opportunities, which that filter excludes. Pull open opps *and* Closed Won opps with a
+WO in `Coordination` / `Scheduling` / `Work In Progress` / `On Hold`, then confirm no overlap.
+Exclude `Pending`: it is the WorkOrder default status and accumulates on lost and long-finished
+records, so it dwarfs the live set without representing work.
+
+**WorkOrder needs zero writes.** It has no writable Account Manager field —
+`AccountManagerName__c` / `AccountManagerPhone__c` / `AccountManagerEmail__c` are formulas over
+`Opportunity__r.AccountManager__r.*`. Updating the parent Opportunity moves them.
+
+**What the update fires.** Changing `AccountManager__c` triggers the team-member sync flow, which
+**deletes the outgoing person's team row for the changed role and creates the incoming one**. Confirm
+the outgoing person retains access another way (record owner, or another role lookup on the same
+record) before loading. The primary-contact and record-defaults flows are Create-only and do not fire
+on update. Flows with `doesRequireRecordChangedToMeetCriteria = true` do not re-fire when their
+criteria field is untouched.
+
+**Verify from the org, not the bulk job result.** The Hatch campaign distribution must be identical
+before and after; if it moved, the reassignment re-enrolled or dropped records. Note two traps while
+checking: aggregates must be pulled with `--result-format json` (CSV blanks the values), and
+`OpportunityTeamMember.TeamMemberRole` stores abbreviated values — `Account Mgr`, `Project Mgr`,
+`Partner Mgr` — so querying the spelled-out form returns zero rows silently, which is
+indistinguishable from a failed load.
