@@ -312,6 +312,48 @@ object rather than assuming a licence-type restriction.
 then **cannot be reverted**, because restoring the original inactive owner hits the first block. Check
 `User.IsActive` and `ObjectPermissions` first — both are queryable.
 
+## ⚠️ Account teams do not reach WorkOrder — and "who can see this?" has a direct answer
+
+`WorkOrder`'s internal sharing model is **Private**, not Controlled by Parent
+(`SELECT QualifiedApiName, InternalSharingModel FROM EntityDefinition` via the Tooling API).
+It therefore inherits **nothing** from the Account, and `WorkOrderLineItem` is
+`ControlledByParent` off the WorkOrder — so line-item visibility follows the work order, never
+the account.
+
+**`AccountTeamMember` carries exactly four access levels — Account, Contact, Opportunity, Case.**
+There is no work order level, so adding someone to an account team grants them the account and its
+opportunities and **still leaves every work order on that account invisible**. This is a natural
+thing to reach for when someone can't open a job, and it silently covers the wrong objects.
+
+Useful control when checking whether the grant landed: the Account access flips **immediately** on
+the same write. So if the account reads accessible and the work orders don't, that is scope, not
+sharing-recalculation lag.
+
+**Stop reasoning about role hierarchy and OWD — query the answer.** `UserRecordAccess` returns it
+per user per record:
+
+```sql
+SELECT RecordId, HasReadAccess, HasEditAccess, MaxAccessLevel
+FROM UserRecordAccess
+WHERE UserId = '005…' AND RecordId IN ('0WO…','0WO…')
+```
+
+`RecordId` **must** be in the SELECT or Apex fails to compile with *"RecordId field must be
+selected."* It filters on a **single `UserId`** at a time, so checking several people is one query
+each — batch the record ids, not the users.
+
+Two things this settles that inference gets wrong:
+- **Identical `WorkOrderShare` rows do not imply identical access.** Two records can carry the same
+  rule-based, manual and owner shares and still be readable by different people, because what
+  matters is group membership, which the share row does not show.
+- **A record being invisible is not evidence about how it was created.** Check whether *older*
+  records of the same shape behave the same way before concluding a build introduced the problem.
+
+Where ownership and sharing rules can't be changed safely, a **manual share** (`RowCause = Manual`,
+`AccessLevel = 'Edit'`) is the additive, reversible fix: it changes no org-wide setting, no sharing
+rule and no group membership, and deleting the rows undoes it. Insert with `Database.insert(list,
+false)` and skip pairs that already exist, or a re-run trips `DUPLICATE_VALUE`.
+
 ## Field history — retention caps what is knowable
 
 Field history is retained on a **rolling ~18-month window**, so the horizon **moves forward over time**.
