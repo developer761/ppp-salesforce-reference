@@ -354,6 +354,37 @@ Where ownership and sharing rules can't be changed safely, a **manual share** (`
 rule and no group membership, and deleting the rows undoes it. Insert with `Database.insert(list,
 false)` and skip pairs that already exist, or a re-run trips `DUPLICATE_VALUE`.
 
+## ⚠️ "Colors Received" is not a mirror of whether colours were collected
+
+`WorkOrder.ColorsReceived__c` is the operational flag the coordination team reads to decide a job is
+ready to order materials for. Two things about how it is set will mislead anyone reporting on it.
+
+**1. It only fires on a structured colour.** The colour-entry tool sets it when at least one colour
+lands in a real colour lookup on a line item (`ColorWall__c` / `ColorCeiling__c` / `ColorTrim__c` /
+`ColorFloor__c` / `ColorOther__c`). A submission that puts colours **only into `ColorNotes__c` as
+text does not flip it.**
+
+That case is not an edge case, because Salesforce has dedicated colour fields for **wall, ceiling,
+trim and floor only** — every other painted surface shares the single `ColorOther__c` slot. So:
+
+- **one** non-standard surface on a line (e.g. cabinets) → its colour goes to `ColorOther__c`, and
+  the flag fires.
+- **two or more** non-standard surfaces on the same line (e.g. cabinets + door) → both colours are
+  bundled into `ColorNotes__c` as text and `ColorOther__c` is deliberately left blank → **the flag
+  stays false even though every colour was entered correctly.**
+
+Same result on any whole-scope job whose colours were only ever written as prose.
+
+**2. It is never set back to false.** It records "this happened"; a human may have ticked it for
+reasons the automation cannot see, so nothing clears it.
+
+**Consequence for reporting:** `ColorsReceived__c = false` means *"no colour reached a structured
+field,"* not *"nobody has chosen colours."* Any "jobs waiting on colours" metric built on it will
+over-count, concentrated exactly on cabinet/door work and on jobs quoted as a single whole-house
+line. Read the line items' colour fields **and** `ColorNotes__c` before treating a job as unstarted.
+
+---
+
 ## Field history — retention caps what is knowable
 
 Field history is retained on a **rolling ~18-month window**, so the horizon **moves forward over time**.

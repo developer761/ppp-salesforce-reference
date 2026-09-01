@@ -636,7 +636,7 @@
 | COI_Needed__c | COI | Picklist | No | — |
 | Collections__c | Collections | Checkbox | Yes | — |
 | Collections_Status__c | Collections Status | Picklist | No | — |
-| ColorsReceived__c | Colors Received | Checkbox | Yes | — |
+| ColorsReceived__c | Colors Received | Checkbox | Yes | Operational "ready to order materials" flag. ⚠️ When set by the colour-entry tool it fires **only if at least one colour landed in a structured colour field on a line item** — a notes-only submission does not flip it. See the trap below. |
 | CommissionAmount__c | Commission Amount | Currency | No | — |
 | Contractor__c | Assigned Labor Crew | Lookup(Account) | No | — |
 | CoordinationCompleteDate__c | Coordination Complete Date | Date | No | — |
