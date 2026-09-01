@@ -195,6 +195,61 @@ a genuine data change is almost never that even.
 
 ---
 
+## Reviewing the batch: approve by SHAPE, not by row
+
+Collapse the upload into distinct **change-shapes** — the set of fields changing and the old→new value
+class — and review those instead of the rows. A representative batch of ~290 rows collapses to ~12 shapes,
+and a single shape routinely accounts for **70–75%** of it. Validating that one rule settles three quarters
+of the upload.
+
+Once a shape has been approved unchanged across several runs with no validator regression, it can carry a
+**standing approval** and stop requiring a per-run decision. On our process nine shapes now do, covering
+roughly 88% of a typical batch. Two rules make that safe:
+
+- **Never auto-approve on shape alone.** Anything carrying a provenance HOLD (a person set the current
+  value deliberately), a freshness conflict (the record changed after the export was pulled), or a shape
+  never seen before still stops for a human — regardless of how routine the shape looks.
+- **Verify the condition, don't assume it.** One standing approval here was granted on the belief that a
+  field-only change was scoped to a single lead source. It was — but that was *checked* before the rule
+  was written, not asserted. A standing approval built on an unverified premise silently widens over time.
+
+⚠️ **Make the shape summary an artifact, not console output.** Ours prints to stdout and is written
+nowhere, so the thing the process designates as *the review* survives only as terminal scrollback. That is
+survivable while a person watches each run and fails silently the moment the run is scheduled.
+
+---
+
+## Validator output: separate UNRESOLVABLE from ACTIONABLE
+
+A pre-upload validator that checks whole-row consistency will accumulate rows it flags every single run.
+Left unclassified, the count stops meaning anything — ours read 26 failures of which **26 were expected**,
+which is the same defect as a check that cannot fire, merely inverted. A check that always fires on
+known-good conditions trains the reader to skim past it.
+
+Sort every flagged row into three buckets, because they need three different responses:
+
+| Bucket | Is the record actually coherent? | What to do |
+|---|---|---|
+| **False positive** — a deliberate routing rule the validator doesn't know about (commercial-division / affiliate ACD routing) | **Yes** — the check is wrong, not the record | **Exempt it.** Encode the rule in the validator. |
+| **Correct-by-construction** — e.g. a lead whose postal code falls outside the service footprint, so no territory and no ad-cost record is right | **Yes** — no spend in any territory means no ACD is correct | Reclassify as coherent. |
+| **Unresolvable** — a lead with a group but no postal code, so no territory and no cost record can ever be derived | **No — genuinely incoherent** | **Keep counting it.** |
+
+> ⚠️ **"We can't fix it" and "it's fine" are not the same state.** The instinct is to suppress the
+> unresolvable rows because no one can action them. Resist it: real ad spend produced those leads and it is
+> booked to nothing. Inability to resolve a record does not make the record consistent, and suppressing it
+> makes the number look clean by hiding something true. Report it on its own line as `unresolvable` —
+> **that count is itself the metric for the upstream defect creating them.** Ours tracks a lead form
+> accepting submissions with no postal code; if it climbs, the form got worse. Suppressing it would have
+> destroyed the only number measuring the leak.
+
+**Exemptions must read every owner source.** A routing rule keyed on "who owns this" has to check the
+record owner, the record creator, *and* the converted opportunity's owner. Two flagged rows proved why:
+one was an **unconverted** lead, so there was no opportunity to read and only owner/creator identified it;
+the other had a coordinator as lead owner and the relevant person only as **opportunity** owner. An
+exemption reading either source alone misses half the population.
+
+---
+
 ## Data Loader Upload (3 jobs, in order)
 
 ```bash
@@ -461,10 +516,19 @@ For Meta leads where WC provides a campaign name, the script attempts to populat
 
 ## Known ACD Gaps
 
-Territories that periodically have no ACD and always route to Lead Review:
-- NY Suffolk East
-- FL Tampa East
-- A small number of newer territories (~5 or fewer) receive ACDs created month-by-month rather than in advance; these will surface as ACD gaps when the ACD hasn't been created yet for the current month. Check for these before each run and confirm with whoever manages ACDs if unexpected territories are missing.
+> ⚠️ **A standing list of "territories with no ACDs" decays into a list of false alarms. Both entries on
+> ours were wrong when finally checked.** Before calling a territory a gap, ask two questions in this order:
+>
+> 1. **Is the territory still active?** A retired territory (`ServiceTerritory.IsActive = false`) has no ACDs
+>    *by design*. One of ours had been inactive — along with ~20 others — while sitting on the gap list as
+>    though it were missing data. An inactive territory is not a gap and never will be.
+> 2. **Does it carry a standing ACD set, or get them on demand?** Some territories are provisioned
+>    month-by-month rather than in advance. A run showing "2 of 7 types" there is normal operation, not a
+>    finding, and raising it every cycle trains the reader to ignore the check.
+>
+> **A genuine gap is: an ACTIVE territory, that carries a standing ACD set, missing a type for a month in
+> which leads actually landed.** Everything else is retired or on-demand. Verify live each run rather than
+> maintaining the list — and confirm with whoever manages ACDs before raising one.
 
 ---
 
