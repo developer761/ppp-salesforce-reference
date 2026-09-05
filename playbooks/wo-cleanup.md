@@ -227,7 +227,9 @@ Real (non-estimate) WOs where the job is fully complete should move to `Status =
 - `StartDate` and `EndDate` both set
 - **Attendance complete** — `LaborDaysActual__c` reaches the day estimate (see "Attendance completeness rule" below); merely `!= 0` is not enough. A partially-logged WO (e.g. 2 of 12 days) is **flagged**, not closed.
 - `Contractor__c` != null (crew assigned)
-- `RequestReview__c` != null
+- `RequestReview__c` != null — **except owners on configured exempt profiles**, who are excused from
+  the request-review requirement. **Grade this in code, not in the query.** See "A rule in a WHERE
+  clause is unfalsifiable" below.
 - `BalanceOwed__c` within ±$0.01 (`>= -0.01 AND <= 0.01`) — only the unavoidable tax-rounding penny left after balance adjustments; the target is `$0`. Larger balances fall through to the small-balance adjustment pass first, then close on the next run. (Was `= 0`, briefly ±$0.05.)
 - `Total_Undeposited_Payments__c` = 0 — the **amount** field; do not use the count field `UndepositedTransactions__c`
 - **No transaction activity for more than 7 days** — see "Anchor the quiet-period gate on all activity" below
@@ -266,9 +268,24 @@ happen. Switching the anchor cut closes-landing-on-top-of-later-activity from **
   "quiet period" test means any reopened work order can never close again — the act of closing
   generates the transaction that blocks the next close.
 
-**State the blind spot as a number:** purchases carry an entry-lag tail — roughly 14% are entered more
-than a week after the date they carry — so the gate cannot see those coming at any window length.
-Payouts and payments-in are entered same-day. Accepted, and documented rather than discovered later.
+**Anchor on the later of "when it happened" and "when it was recorded."** The gate first anchored on
+the transaction's stated date alone, which left an entry-lag tail: roughly 14% of purchases are
+entered more than a week after the date they carry, so a work order could read as quiet for weeks
+while money was being recorded against it the day before. That was written up as an accepted,
+unmeasurable blind spot — and it was neither. Checking *created* date as well as stated date is a
+single predicate, and on one live run it caught **4 of 59** work orders about to be irreversibly
+closed, including a large job still in progress with several purchases entered the previous day.
+
+Take the **later of the two dates** as the anchor. Same window, same scope, same routing — only the
+anchor widens, so the gate can become more conservative but never less. Measured effect on adoption:
+about **2.6% of previously-quiet records become held**, with a backdating lag of roughly a week at
+the median. Note that a created-date field is typically UTC while a stated date is a plain date, so
+a late-in-the-day entry can read one day later; that skews toward holding a record back, never
+toward closing one early.
+
+⚠️ **Treat any "accepted blind spot" as a claim to re-test.** A limitation stated as a precise
+number reads as measured, but the number and the conclusion drawn from it are different claims. Ask
+what one query would falsify it — particularly before an irreversible write.
 
 **This gate tests recency, not completeness.** It does not replace the payout floor (which asks whether
 payouts are *proportionate* to job value). Both run; they answer different questions.
@@ -276,6 +293,161 @@ payouts are *proportionate* to job value). Both run; they answer different quest
 ⚠️ **Put the gate in one module and import it.** This logic existed in two scripts with the same
 constant and the same field, which is the drift failure mode described under "Scope exclusions are a
 design surface" — the copy you forget is the one that writes to production.
+
+### A "safe to write" gate and a "safe to nag" gate are two different gates
+
+The quiet-period gate above decides whether an **automated write** is safe. A separate family of rules
+decides whether a **person gets chased** about a stale-looking record. Both ask "has anything happened
+lately", and it is tempting to reuse one for the other. Don't — the scoping arguments point opposite
+ways:
+
+| | Safe to write | Safe to nag |
+|---|---|---|
+| Question | is closing this record going to destroy work in flight? | has a human abandoned this job? |
+| Record kinds | **narrow** — exclude anything the close itself causes | **broad** — everything counts |
+| Window | days | weeks to months |
+| Cost of firing wrongly | an irreversible write | a wasted message |
+
+The concrete asymmetry: sales commission is deliberately **out** of the write gate, because closing
+generates it and including it would deadlock re-closes. That reasoning has no force for the nag gate,
+where nothing being tested is a consequence of the test. Keep both in the same module, side by side,
+with a header saying why they differ — merging them silently imports one's scoping decisions into the
+other's question.
+
+### Build the dormancy gate from every record a human can touch
+
+A "no recent activity" clause that reads only transactions will keep flagging jobs somebody is
+actively working. Count **change orders and crew attendance as well as transactions** — writing a
+change order or logging a crew day is unambiguously someone working the record.
+
+Three faults, all found in one gate on one review cycle, each of which alone produced flags the
+reviewer then dismissed by hand:
+
+1. **Record scope.** Transactions only, so a change order raised last week counted for nothing.
+2. **Population scope.** The gate was built over work orders *in progress with no end date*. The rules
+   it fed included several whose entry condition is *being past the end date* — so the majority of the
+   records it was meant to gate were never gated at all, and two neighbouring rules sat outside the
+   population entirely. ⚠️ **Check that a suppression's population is a superset of every rule it
+   suppresses.** A gate that silently covers a third of its callers looks like a working gate.
+3. **Anchor.** Stated date only — the same backdating hole closed on the write gate weeks earlier and
+   never carried across. Two flagged records read "16 days quiet" and "13 days quiet" on stated date
+   while money had been *entered* against them 8 and 2 days before.
+
+⚠️ **When you fix an anchor on one gate, grep for the other gates using the same anchor.** The fix was
+correct, documented, and measured — and it stayed in one file for a month while a second gate a few
+hundred lines away kept the bug.
+
+### Set a nag threshold from the reviewer's own dispositions, not from intuition
+
+A reviewed sheet where a human marked every row is a **labelled dataset**, and it is the cheapest
+threshold-setting instrument available. Compute the candidate metric for every row, split by the
+reviewer's verdict, and read the separation off directly.
+
+Worked example — days since last activity, on one cycle's rows:
+
+```
+acted on :  20, 23, 38
+skipped  :  1, 2, 8, 23, 23, 29, 30, 37, 48, 49, 154
+```
+
+A 14-day threshold removes the 1/2/8 cluster and loses nothing the reviewer acted on. Note what the
+data also says: **the skips above 20 days are not recoverable by this metric.** They were skipped for
+reasons no recency test can see — a balance still fully due, an outstanding question with a third
+party. Widening the window to chase them would start eating rows the reviewer wanted.
+
+⚠️ **Read the overlap as a finding, not as a threshold-tuning problem.** Clean separation means the
+metric is the right one. Heavy overlap means some of those rows need a *different* rule, and no
+setting of this one will fix it.
+
+⚠️ **Record the sample size next to any threshold set this way.** In the same exercise a second
+threshold — for a "leave it alone" status where the standing instruction is not to chase at all — had
+only **four** labelled rows, bracketing the answer to somewhere between 146 and 622 days. A round
+number inside that band reproduces all four calls and is still barely evidenced. Write down `n=4` so
+the next person tightens it instead of inheriting it as measured.
+
+### A minimum age makes "$0 balance" readable
+
+A rule keying on a zero balance needs a **minimum record age**, or it fires on brand-new jobs where
+zero is simply the opening state and nothing has been billed yet. The reviewer's phrasing: a job
+created two days ago, paid in full, "couldn't mean that work was completed."
+
+Anchor the floor on **created date, not days-in-status** — a record can bounce between statuses in its
+first week and still be new.
+
+### Retiring a rule beats redefining it into a duplicate
+
+When a reviewer says a rule's population is benign, check whether the *narrowed* version is a rule at
+all before writing it. In one case the narrowing — "flag the cancelled record only when a live one
+also exists" — turned out to match **zero** records, while the shape the reviewer had just called fine
+was the rule's entire population. Worse, on any record where the narrowed rule *would* fire, the live
+sibling it keys on already triggers a different rule on the same parent, so it could only ever restate
+that rule from the other side.
+
+Two lessons. **Measure the narrowed population before implementing it** — a rule that survives as an
+empty shell is harder to remove later than one retired honestly. And **check a narrowing against the
+rule set's overlap invariant**, not just against the sentence that prompted it.
+
+⚠️ This also surfaced a drift worth checking for generally: the written rule said *only* cancelled,
+the code fired on *any* cancelled record regardless of siblings. Nobody noticed, because the two
+populations happen to coincide. **When a rule is being changed, diff the code against its written
+definition first** — you may be changing something that was never what the document said.
+
+### What may be raised with a self-managing owner is a VISIBILITY test, not a correctness test
+
+Where a team is carved out of routine clean-up but exceptions are allowed for "data integrity", the
+useful boundary is **not** "is this record wrong". Almost everything the process detects is wrong by
+construction, so that test re-admits the whole clean-up through the exception.
+
+The boundary that holds is: **would their own reports show them this?**
+
+- **In** — contradictions *between* records across an object boundary. A single-object report cannot
+  show them, so nobody on that team can reasonably be expected to have caught it.
+- **Out** — completeness gaps on a single record of their own, however wrong. That is exactly the
+  routine clean-up the carve-out excludes, and they can see it themselves.
+
+Measured cost of getting this wrong: on one cycle the looser "integrity" test put **41 rows** in front
+of a self-managing owner and the reviewer dismissed **all 41**. Meanwhile the rule matching the
+*example the carve-out was negotiated on* — an active work order under an opportunity still in an
+early stage — had never been classified as integrity at all, so the one case everyone agreed should be
+raised was the one being suppressed.
+
+⚠️ **Check that the carve-out actually admits its own motivating example.** It is worth writing that
+example into the rule list as a comment, because a category built from a principle drifts away from
+the case that produced it.
+
+### A rule in a WHERE clause is unfalsifiable
+
+The close pass enforced the request-review requirement **in its SOQL filter**. That looks equivalent to
+checking it in code, and is not: a per-profile exemption has nowhere to live in a `WHERE` clause, so
+exempt work orders were never *rejected* — they never came back from the query at all. They could not
+appear on a validation sheet and could not close, on any run. Nine records sat in that state; one met
+every criterion and had never once been listed.
+
+It survived four months while three noisier duplications in the same process were each caught, and the
+reason is structural: **a filter drops records silently, so no diff, test or review can observe what it
+did.** Grading the same rule in code returns the record with a disposition attached, which a comparison
+can see.
+
+**Convention: select scope in the query; grade rules in code.** Statuses, date-presence and similar
+coarse boundaries belong in SOQL. Anything carrying an exemption, a per-owner carve-out or a threshold
+belongs in code, where the exemption can reach it and where a test can prove what happened.
+
+⚠️ Where a rule must hold back records that are not close-ready, prefer an explicit skip **with a
+printed count** over an invisible filter. "Held back for reason X: 9" is auditable; a `WHERE` clause is
+not.
+
+### Equivalence-test two graders before merging them
+
+Where a detection sweep and a write pass both decide the same question, prove they agree before giving
+either one authority. Run both classifiers over the same record set and cross-tabulate. A clean result
+means the merge carries a known-zero behaviour delta, which turns an architectural change into a
+mechanical one — and agreement is the *reason* to merge, since it lapses at the next rule change.
+
+⚠️ **A naive diff of two graders reports false drift in both directions.** Verify the harness before
+believing it. Two traps that produced 22 phantom disagreements on a real run: passing a *function*
+where a per-record boolean was expected (truthy for every record, so a team-scoped rule fired
+org-wide), and calling the classifier without the **routing applied around it** — owner drops,
+surface-only carve-outs and similar often live outside the classify function, not inside it.
 
 ### Batching
 Close via REST composite (`PATCH /composite/sobjects`) in batches of 10 with `allOrNone=false` — same governor-limit reasoning as Section 1.
@@ -710,3 +882,74 @@ when the rule is right: the recorded value is a faithful record of what the syst
 Set the floor at the start of the open period and keep the rule running forward, so a later automation
 touching an old record still resurfaces it — a floor on the *close* date preserves that visibility,
 whereas a floor on the record's creation date would blind the rule to old records being re-touched now.
+
+
+## Chasing a stale queue: throttle the ask, don't hide the record
+
+A detection rule that flags "parked too long with nothing scheduled" will, on first run against a
+real backlog, hand one person dozens of records at once. Four things make that queue workable, and
+three of the four are about *routing*, not about the rule.
+
+### Raising the threshold is not free
+
+The obvious lever is to raise the age threshold so fewer records qualify. It works, but it removes
+those records from the review sheet **entirely** — not just from the outreach — so nobody can see
+the inflow building. Prefer gating the *outreach* and leaving detection broad, unless the process
+owner explicitly wants the quieter sheet. Either is defensible; what is not defensible is raising
+the threshold and then being surprised the early-warning band went dark.
+
+⚠️ **Before changing a threshold, reconstruct why it holds its current value.** A number that looks
+like drift can be a deliberate redefinition. On one such change the design note recorded a value in
+*days-in-current-state* while the implementation used *days-since-created* — two different bases as
+well as two different numbers, changed together in a rewrite with no rationale captured. Restoring
+"the original number" onto the newer basis produces a **third** rule, not the original one. Say so
+explicitly in the decision log, because the next person will read the two figures and assume a typo.
+
+### Chunk by owner, and rank on an anchor that cannot reset
+
+Surface the oldest N per owner per cycle rather than the whole backlog. Rank on **record age**, not
+time-in-current-state:
+
+- Time-in-state depends on status history, which is retention-capped; where history is missing the
+  calculation silently falls back to created-age anyway (see `salesforce/BUSINESS_RULES.md` →
+  *Field history*).
+- More importantly, time-in-state **resets on any status touch**. Under a chunked rollout a record
+  only gets chased when it reaches the top of the queue, so a resettable key lets a record be pushed
+  to the back indefinitely by activity that changes state without doing the work. Record age is
+  monotonic — a record's position only ever improves, so everything surfaces eventually.
+
+### Cooldown belongs in your own send log, never on the record
+
+Once a work order has been asked about, it should stop consuming review attention until the owner
+has had a fair chance to respond. The tempting implementation is to write a follow-up date on the
+record on the owner's behalf.
+
+**Don't.** If a future follow-up date is one of the rule's own suppression conditions — and it
+usually is, because "someone has scheduled a next touch" is exactly what makes a parked record not
+stale — then writing one **hides the record from you as well as from the email**. That converts a
+throttle into a disappearance, and it is indistinguishable afterwards from the owner having handled
+it. Drive the cooldown from your own outreach log instead: it is reversible, invisible to the field,
+cannot be mistaken for the owner's input, and its window is a parameter rather than a date somebody
+has to remember to clear.
+
+If something genuinely must be written to the record, prefer an **append-only notes field** over any
+field the rule reads. Notes suppress nothing.
+
+⚠️ **Resolve cooldown before allocating chunk slots, not after.** Ordering matters: if the oldest N
+are selected first and cooldown is applied as an override, an owner whose oldest N are all in
+cooldown receives **zero** new asks that cycle, and stays stuck for as long as the cooldowns keep
+renewing. The cap limits what you *ask for*; a record you are not asking about should not consume a
+slot. This is easy to get backwards and a unit test catches it immediately.
+
+### Tier the wording, and only claim what the data supports
+
+Split the ask by age — a recent record warrants "making sure this is on your radar", an old one
+warrants "should this be cancelled?". Both should offer the owner the action that clears the flag.
+
+Be careful claiming **"no update since"**. That is a statement about change over time, and it needs
+field history to support it. Typically only a handful of fields are tracked; date fields can be
+tracked but collect nothing retroactively, and **long text areas cannot be history-tracked at all**,
+so a notes field is permanently invisible to any such claim. Record-modified timestamps are not a
+substitute — they are contaminated by bulk updates, which cluster many records on a single date and
+make quiet records look recently touched. State what the rule actually tested (no start date, no
+attendance, no scheduled follow-up) rather than a broader claim about activity you cannot evidence.
