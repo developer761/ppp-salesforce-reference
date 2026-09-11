@@ -216,13 +216,15 @@ Per-run output in `BMCR Recon/<YYYY-MM-DD>/`:
 - `applied/sf_bulk_update_payload.csv` — rows written to SF
 - `logs/run.log` — full run log
 
-Review packet tabs:
-1. **Proposed Writes** — reconcile rows staged for SF, with an **Approve** column (default `yes`), sortable by change-category. `--apply` writes only Approve==yes rows.
-2. **Review – Actionable** — surfaced rows needing a human decision (potential drops, recent rejection matches, not-found)
-3. **Review – Low Priority** — high-volume, low-value surfacing (old orphans, no-paint/no-receipt, "will show next statement")
-4. **Gallons Backfill** — the awarded-gallons capture batch, with its own Approve column; applied by `--apply-gallons`, separate from the reconciliation writes
-5. **All Transactions** — full view with all classifications
-6. Plus legacy tabs (reviewer tab, Uploaded Changes, Needs Manual Research) for continuity
+Review packet tabs, in reading order — **review piles first, writes next, reference last**, because the tabs that need a human are the ones worth opening first:
+1. **Reviewer tab** — rows escalated to the programme contact (reductions, known errors)
+2. **Statement Rows – Review** — statement rows with no confident record match
+3. **Record Rows – Review** — matched records needing a human decision
+4. **Proposed Writes** — rows staged for the CRM, with an **Approve** column (default `yes`), sortable by change-category. The apply step writes only Approve==yes rows.
+5. **Gallons Backfill** — residual gallons captures. **Should be empty** (see "A gallons-only difference is still a write"); rows here mean routing dropped something. Treat it as a canary, not a work queue.
+6. **Review – Low Priority** — high-volume, low-value surfacing (old orphans, no-paint/no-receipt, "will show next statement")
+7. **No Action Needed** — resolved without a write (rejected duplicates of already-approved purchases, prior-period carry-forwards)
+8. **All Transactions** — full view with all classifications
 
 Each audit-gate tab also carries **Match Tier**, **Fuzzy %**, and **Stmt Row** provenance columns.
 
@@ -313,6 +315,107 @@ compare it against what the invoice says *should* have been awarded.
 equivalent alongside its points value — and notably, **a large minority of SKUs carry a
 gallon equivalent but zero points**. Reconciling on points is structurally blind to that
 volume, which is the substantive argument for the change, not just a preference.
+
+## Reviewing a staged batch: name the rows that do not fit
+
+A link to a 900-row packet hides its own problems. Almost every staged write is the same dull
+progression, and the rows worth a human's attention are the handful that deviate. So after the
+packet builds, **profile it and report the exceptions in the channel where the reviewer
+already is**, before handing over a link.
+
+Report, every run:
+
+- **Off-shape rows** — anything whose before/after status is not the dominant progression.
+  Give the record, the match tier, the status change, and the note.
+- **The safety invariants**, asserted rather than assumed: no reduction of points or volume,
+  no identifier written over an existing one, a count of any status downgrade, and a count of
+  human-annotated rows that would otherwise write anyway.
+- **A month-over-month trend with driver breakdown.** A count moving sharply is how an
+  upstream change announces itself — a new vendor feed, a bad submission batch, a filter
+  quietly dropping rows. Flag at a multiple of the prior median with a noise floor, and show
+  the **top reasons behind each flagged metric** so the spike points at its own cause. Normalise
+  row-specific values (record names, identifiers, amounts) out of the reason text or nothing
+  groups.
+
+On one run this was 4 rows out of 922, and all four were real: a record type that could never
+have earned the reward, a row that would have carried points under a contradictory status, and
+a statement/CRM disagreement. None would have survived scrolling.
+
+**Use plain language for every metric.** An internal term ("synthetic rows") is invisible to
+the person reading the alert. Say what the number *is* — "statement rows with no matching
+transaction, added as placeholders so they are visible" — and keep the label next to the count.
+
+**Charts in email:** mail clients strip `<svg>` and block most external images. Build bars from
+table cells with background colours, inline the critical styles, and assert at render time that
+neither an `svg` tag nor an external `src` reaches the HTML.
+
+## Running it unattended
+
+Anything scheduled should survive the machine it was built on. Four failures, each of which
+silently produced *nothing* rather than an error:
+
+1. **A moved project folder.** The scheduler entry hardcoded a path; the project was
+   reorganised and the job could no longer be spawned at all. It failed every morning for
+   months, and because it never started, it never reached its own error handler.
+2. **A writability probe that does not probe.** `mkdir(parents=True, exist_ok=True)` on an
+   **already-existing** directory is a no-op — it never touches the filesystem and therefore
+   cannot detect missing permission. The real failure then surfaces on the *next* write,
+   outside the guard. Probe by creating and deleting an actual file.
+3. **Storage the scheduler cannot reach.** A process spawned by the OS scheduler does not
+   inherit the interactive shell's disk-access grants, so an external or removable volume that
+   works by hand fails on a schedule. Treat cloud storage as the durable home and the local
+   directory as scratch — upload everything needed to resume, re-run or revert, every run.
+   Never fall back to the system temp directory: it gets reaped, so an unattended run's only
+   local copy can evaporate.
+4. **A notification channel nobody tested.** The failure alert pointed at a decommissioned
+   chat workspace and every notice for months was swallowed. **Send failure notices on two
+   independent channels**, and verify the alert path itself on a schedule — an alerting system
+   that has never fired is untested, not healthy.
+
+## A coded column is not the column you think it is
+
+A vendor statement's status column held single-letter codes, not words. A filter written
+against the words returned **zero rows** — which reads as a clean result, not a broken filter.
+
+**Run a positive control before reporting any null or surprising result:** apply the same
+filter to a period where the answer is already known. If the control does not reproduce the
+known figure, the filter is wrong, not the world. Here the control returned the documented
+count exactly, which is the only reason the real number was trusted.
+
+### A gallons-only difference is still a write
+
+Gallons was added to a reconciliation whose **routing predates it**. The route decision
+defaults to *no change* and every branch below it keys on status, points and dollars only —
+gallons is never consulted. So a row whose **only** difference is gallons can never reach the
+proposed-writes tab, and a side tab has to catch it.
+
+That side tab is a symptom, not a design. The fix is to treat a gallons difference as what it
+is — a proposed write — and promote such rows into the normal write path. Afterwards the side
+tab should be **empty every month**, which makes it a useful canary: anything landing there
+means the router dropped something.
+
+**Order matters, and getting it wrong is silent.** There is a separate rule that *holds*
+gallons on any row sitting on a human review pile — reviewers confirm the figure from their
+own sheet, so the CRM is not pre-filled underneath an open review. If that hold runs inside
+the classifier, it runs **too early**: a later residual-matching pass re-routes rows, and
+every row demoted to a review pile *after* the hold keeps a live staged gallons write. On one
+run this was 32 rows re-routed and 22 that kept a write the hold existed to prevent — and they
+surfaced on the side tab with Approve defaulting to `yes`.
+
+Settle gallons **once, after routing is final**: promote first, then hold. Both steps belong
+in a single function called from the orchestrator, not inside the classifier.
+
+### Every residual lookup needs the main pull's filters
+
+The main extract is scoped to purchase-type records. A residual "find the twin by invoice
+reference" lookup is a *different query*, and if it is written without that same record-type
+filter it will happily return non-purchase records — a **payout**, for instance, which cannot
+earn rewards at all. One reached the proposed-writes tab staged as approved.
+
+The lesson generalises beyond this field: **when a sleuth query exists to find what the main
+pull missed, it must still inherit every correctness filter the main pull applies.** Only the
+*reach* should widen, never the *eligibility*. Audit each residual query against the main
+extract's WHERE clause.
 
 ### A new statement column has no history behind it
 
