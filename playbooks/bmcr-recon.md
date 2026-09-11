@@ -372,6 +372,47 @@ silently produced *nothing* rather than an error:
    independent channels**, and verify the alert path itself on a schedule — an alerting system
    that has never fired is untested, not healthy.
 
+## Fix a bad join key at the join, not downstream
+
+A reconciliation binds each record to one statement line and reads that line's status as the
+purchase's outcome. So a wrong key is not a cosmetic data-quality issue — it silently decides the
+answer.
+
+The case: a **submission ID** entered into the confirmation-number field. Confirmation-tier matching
+then fails, the record falls back to invoice-tier, and these invoices carry **two** statement lines —
+an approval and a rejected duplicate. **18 of 27 records held the rejected duplicate's submission
+ID**, collectively worth over 1,800 points. Left alone, the next reconciliation would have read every
+one of those purchases as rejected.
+
+**Resolution rule, two branches.** Exactly one *credited* candidate for the invoice → use it; the
+other is the rejected duplicate. Both candidates credited → use the line whose **submission ID equals
+the bad value in the key field**: that value is not noise, it names the exact submission the person
+was recording, and with both lines credited neither choice can strip credit. Anything else stays for
+a human. **Never store a rejected line's key.**
+
+### Where the fix goes is the whole lesson
+
+The first implementation corrected the key *after* classification, and had to choose between two bad
+options: keep proposals computed against the wrong line, or clear them. It cleared them — and that
+produced the worse failure. Records whose key had been corrected were left with blank status, points
+and volume, on a tab labelled *"nothing further to write"*. **Over 2,100 points and 117 gallons sat
+invisible behind a completion label.** It surfaced only because the reviewer asked whether that label
+was actually true.
+
+Correct the key **before matching**, on the extract, and the existing matcher and classifier then do
+their normal work with no special-casing — including routing a few records to manual scoring that a
+hand-written shortcut would have marked approved.
+
+**Generalises past this process:** when a record is mis-joined, patching the *conclusions* leaves you
+choosing between wrong answers and no answers. Repair the key at the join and let the pipeline re-derive
+everything. And **never reimplement the decision rules for the affected subset** — feed those records
+back through the real classifier with a minimal input. A hand-rolled subset is a second copy the moment
+it is written, already missing the branches its author didn't think of.
+
+**A completion label is a claim about the whole record**, not the field you touched. Before writing
+*done* or *no action*, enumerate every field the process can set and check each one — especially where
+an earlier guard CLEARED values, because that work still exists and is merely no longer visible.
+
 ## A coded column is not the column you think it is
 
 A vendor statement's status column held single-letter codes, not words. A filter written
