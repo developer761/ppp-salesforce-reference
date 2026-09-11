@@ -88,9 +88,10 @@ Match (conf# → ref/invoice → amt/vendor tiers):
 ├─ BMCR row NOT rejected                     → reconcile (usual checks; increases only)
 └─ BMCR row = Rejected:
      ├─ SF = Submitted                       → reconcile (record the rejection)
-     └─ SF ≠ Submitted:
-          ├─ age ≥ 350d                       → review "Potential drop - SF [status] + ≥350d …"
-          └─ age < 350d                       → review "recent rejection match …"
+     └─ SF ≠ Submitted  (revised 2026-07-14: NO ACTION, was review-by-age):
+          ├─ SF = Approved                    → no action, quoting the statement's own reason
+          │                                     (see "Quote the source's reason …" below)
+          └─ SF = Rejected/no-paint/no-receipt → no action, "both no-credit, confirmatory"
 No match (#N/A):
 ├─ SF No_Paint / No_Receipt                  → review "Drop - no receipt/no paint"
 ├─ age ≥ 350d                                → review "Potential drop - no match, ≥350d"
@@ -223,7 +224,7 @@ Review packet tabs, in reading order — **review piles first, writes next, refe
 4. **Proposed Writes** — rows staged for the CRM, with an **Approve** column (default `yes`), sortable by change-category. The apply step writes only Approve==yes rows.
 5. **Gallons Backfill** — residual gallons captures. **Should be empty** (see "A gallons-only difference is still a write"); rows here mean routing dropped something. Treat it as a canary, not a work queue.
 6. **Review – Low Priority** — high-volume, low-value surfacing (old orphans, no-paint/no-receipt, "will show next statement")
-7. **No Action Needed** — resolved without a write (rejected duplicates of already-approved purchases, prior-period carry-forwards)
+7. **No Action Needed** — resolved without a write (statement rejections against already-approved purchases, confirmatory no-credit agreements, prior-period carry-forwards)
 8. **All Transactions** — full view with all classifications
 
 Each audit-gate tab also carries **Match Tier**, **Fuzzy %**, and **Stmt Row** provenance columns.
@@ -422,6 +423,66 @@ against the words returned **zero rows** — which reads as a clean result, not 
 filter to a period where the answer is already known. If the control does not reproduce the
 known figure, the filter is wrong, not the world. Here the control returned the documented
 count exactly, which is the only reason the real number was trusted.
+
+### Disqualifying one side of a match does not release the other
+
+A statement row matched a record in the CRM, the match was judged not to qualify during
+review, and the row settled on **No Action**. That reads as closed. It is not: the statement
+row is still bound to the record it should never have matched, so it appears on no review
+pile, and the purchase that actually earned the credit is never looked for. The credit was
+**absorbed**, not resolved.
+
+Two fixes, and they are not alternatives:
+
+- **At the join.** The residual lookup that produced the bad pairing matched on invoice
+  reference without filtering record type, so a nine-year-old *outgoing payment* was returned
+  for a reused four-digit reference. Adding the record-type filter the main pull already used
+  closed it. Verified by re-running the lookup: it now returns nothing for that reference.
+- **As a backstop.** The join fix cannot catch the general case, where a legitimate match is
+  disqualified by a *human* during review — that happens after the run, on judgement no filter
+  encodes. So the run also reports credited statement rows whose bound record holds no credit.
+
+**Make the backstop narrow or it will be ignored.** "Credited row on No Action" alone was ~85
+rows a month, nearly all legitimate — a row whose note names the record already holding the
+credit has lost nothing. What distinguishes a real absorption is that the credit is booked
+**nowhere**: the statement side credited, a real record bound, and that record carrying no
+reward status and no points. That is 1 row of 209. A *rejected* statement row sitting on No
+Action is never an absorption — that is the duplicate branch, where no action is the answer.
+
+The general shape: **when a reconciliation consumes a row from each side, invalidating one side
+has to put the other side back.** A pile called "no action" will otherwise accumulate exactly
+the items that most need one.
+
+### Quote the source's reason; don't assert the common case
+
+A no-action note explained a statement rejection as "the rejection is a duplicate" —
+hardcoded, on every row taking that branch. The claim was *inferred* from a scan proving an
+approved confirmation number is never genuinely re-rejected, so the rejection had to be a
+resubmission.
+
+It was right about the common case and wrong as a general statement. The statement carries
+**six distinct rejection reasons**; the duplicate one is merely the most frequent. One row on
+the branch had been rejected as an illegible invoice, and the note called it a duplicate —
+a claim the source never made, in a packet a human signs off on.
+
+The statement's own reason was already being carried through the pipeline, one column over.
+**Cite it.** Three rules make that safe:
+
+- **Fall back, never fabricate.** A blank reason renders as `0` by the source-doc convention.
+  Treat `0` as absent and revert to the inferential wording rather than quoting an empty
+  string — the note should say what is known and no more.
+- **Show the evidence that makes the branch safe.** Where the statement's confirmation number
+  differs from the one on the record, say so inline: that difference *is* the resubmission
+  signature, and it turns the reviewer's check from trusting a rule into reading two values.
+  Omit the clause when the two agree, rather than printing a non-difference.
+- **A generated note is a claim.** Anything auto-written into a review packet carries the same
+  burden as a sentence a person wrote. Prefer the source's words to your summary of them.
+
+Reviewing the branch this way also confirmed the **disregard-token suppressor** is doing real
+work: every row where the confirmation numbers *agreed* — where the record's own submission was
+the rejected one — was already human-annotated (points awarded at the programme contact's
+discretion, or the duplicate marking disputed and verified). None reached the tab. The
+suppressor is not a convenience; it is what keeps adjudicated rows out of the pile.
 
 ### A gallons-only difference is still a write
 
