@@ -424,6 +424,53 @@ filter to a period where the answer is already known. If the control does not re
 known figure, the filter is wrong, not the world. Here the control returned the documented
 count exactly, which is the only reason the real number was trusted.
 
+### When a join fails, enumerate every key both sides carry
+
+A monthly reconciliation matched statement rows to CRM records on invoice number, then amount and
+date. Rows the vendor had **transcribed wrong** could not match on any of them — and the same bad
+read was usually why the vendor rejected the row in the first place ("missing information in
+invoice", "distributor cannot be determined"). Those rows sat unmatched indefinitely.
+
+They were recoverable the whole time. Both systems carried a **submission id** — a dedicated field
+on the record, its own column on the statement — and that key survives a mis-transcribed invoice
+number. It had never been used, because the pipeline's existing key set was inherited as if it were
+the space of possibilities rather than one implementation's choices. A human found the first case
+by hand.
+
+**An existing matcher's keys are evidence of what someone once needed, not proof of what is
+available.** Before calling anything unmatchable, list the fields both sides actually carry, and
+try the lookup in the reverse direction too.
+
+#### Recovering a mis-transcribed identifier — the composite, and why each step exists
+
+1. **Shared submission id** — the candidate net, and *only* that. One submission covers many
+   invoices, so it narrows to a batch, never to a row.
+2. **Date within one day.** Calibrate the tolerance, don't guess it: on pairs whose identifiers are
+   byte-identical, 93.6% were same-day and 100% fell within three.
+3. **Amount agreement, where both sides have one — the discriminator.** Without it the method is
+   actively harmful: **sequential identifiers inside one batch differ by one character**, exactly
+   like a typo, and score identically on any string metric. Requiring amounts to agree cut 982
+   candidate pairs to 36.
+4. **String similarity for ranking only**, plus a mutual-best-with-margin check.
+5. **A global exact-match guard**: if any record anywhere holds the exact statement identifier, skip
+   — the row belongs to *that* record.
+
+Step 5 was learned expensively. Four rows were proposed against the wrong record before it existed:
+one where a sibling record held the identifier exactly, and three where the **correct** statement
+row sat at **zero dollars** while another row in the same batch carried the money — so the amount
+test in step 3 confidently picked the wrong sibling. **The discriminator that prevents one failure
+mode created another**, which is the general hazard of scoring rules: each new signal fixes the
+cases you were looking at and opens cases you were not.
+
+**Output proposals, never bindings.** The recovered pairing is written onto the review row as a
+suggestion naming both identifiers and the evidence, and read out for a human each run. Precision
+is good, not perfect — two genuinely adjacent invoices that happen to share an amount are
+indistinguishable from a typo, and no threshold fixes that.
+
+Finally, **read the error pattern, not just the rows**. The recovered cases were systematically
+OCR — `W` read as `VV`, `G` as `6`, dropped digits — which makes it a vendor-side scanning problem
+worth raising upstream, not merely a matching gap to patch locally.
+
 ### Disqualifying one side of a match does not release the other
 
 A statement row matched a record in the CRM, the match was judged not to qualify during
