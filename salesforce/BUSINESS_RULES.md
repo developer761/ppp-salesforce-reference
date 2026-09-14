@@ -598,6 +598,42 @@ rather than erroring. Measured on one such rule: 43 of 974 flagged records had a
 silently took the wrong branch. **Prefer flagging over falling through**: if the primary condition is
 true but a supporting field is missing, that is an exception worth surfacing, not a default.
 
+## ⚠️ Deploy traps — a field can exist and still be invisible
+
+**Two profiles can share a name, and a metadata deploy picks by name.** An org can carry more than
+one Profile with the same label (e.g. two "System Administrator" records with different ids). A
+`Profile` metadata deploy resolves by name and will happily grant field-level security on the wrong
+one — reporting `Succeeded` while the user who needs access still has none. **Grant FLS by profile
+Id, or in the UI**, and verify against the id on the actual user record rather than the profile name.
+
+**A field with no FLS is invisible, not merely unreadable.** SOQL answers *"No such column on
+entity"* and the `describe` response omits the field entirely — indistinguishable from a failed
+deploy, and identical across every API version. It also keeps the field out of report-type field
+lists, so the report builder looks broken too. Diagnostic: deploy a throwaway formula field whose
+body is just `"X"`. If that is invisible as well, the problem is access, not your formula.
+
+**A newly created field takes time to reach report-type field lists** even once FLS is right.
+Diagnostic: compare the report type's field count against the object's real custom-field count — a
+mismatch means a stale cache, not a missing field.
+
+**Formula-field metadata gotchas:** a Text formula must NOT carry `<length>` (the deploy fails
+outright), and `formulaTreatBlanksAs` should be `BlankAsBlank` for text. `ReportAggregate` uses
+`masterLabel`, not `label`, and element order is enforced. Validate with a check-only deploy
+(`sf project deploy start --dry-run`) before committing.
+
+## ⚠️ Report filters — the boundary days you did not mean to drop
+
+**`greaterThan <date>` excludes that entire day, and `lessThan <date>` excludes that entire day.**
+A range built as `greaterThan 2/1` + `lessThan 8/31` is really **Feb 2 – Aug 30**: both end days
+vanish silently, and the report still looks like the range you asked for. Use `greaterOrEqual` /
+`lessOrEqual`. On one call-center population this quietly removed 113 leads and made a
+hand-calculated figure disagree with the report for no visible reason.
+
+**Report date filters evaluate in the RUNNING USER's timezone**, not the org's and not the
+business's. Where staff work a different zone from the user running the report, every boundary sits
+hours off the real business day. Any reconciliation between a report and a SOQL query must use the
+same zone on both sides — SOQL literals are UTC.
+
 ## SOQL / CLI traps
 
 - **`sf data query` silently caps at 50,000 rows, and under `--json` there is no warning at all.** The
