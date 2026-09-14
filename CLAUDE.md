@@ -19,6 +19,11 @@ This repository is publicly visible on the internet. Everything committed here c
 
 **DO commit:** schema (field/object API names, picklists, relationships), business rules and conventions, KPI *definitions and logic*, process playbooks, and reference code that contains no real data or secrets.
 
+**Only commit what has been verified against the org.** This repo is read as authoritative by
+people who will not re-check it. Anything carrying its own "confirm before relying on this" caveat
+is a research note, not a reference — keep it in the private working folder until it is proven.
+A trap that was measured belongs here; a capability that merely *appears* available does not.
+
 **When in doubt, leave it out** — or describe the *logic* without the *values* (e.g. "draw is stored on a per-rep User field" ✓, not the actual dollar amounts ✗). The detailed/sensitive versions of this knowledge stay in the private Claude Projects on the admin's machine; this repo is the curated, shareable layer.
 
 ---
