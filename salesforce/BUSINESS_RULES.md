@@ -273,9 +273,91 @@ Separately, and reassuringly: the estimator's product-line pick is accurate. Onl
 exterior work orders carrying an interior line were genuinely wrong once checked against their line
 items, and the reverse direction was under **0.5%**.
 
+
 ## Geography / sales tax
 
 - Sales-tax rate is **`ServiceTerritory.TaxRate__c`** (geographic). There is no per-licensee/brand rate and no separate tax object.
+
+### ⚠️ ZIP → Service Territory — which zip routes the job, and which one the customer sees
+
+Three different zip fields are in play and they are routinely confused. Only one of them is
+validated, and it is **not** the one printed on customer documents.
+
+**The vocabulary first** — the org uses "billing" and "shipping" in its own sense, and there is no
+`Contact.Shipping_Zip__c`. The mapping is set by the quote-defaults flow and echoed in flow element
+names elsewhere:
+
+| Term used in tickets/meetings | Actual field | Means |
+|---|---|---|
+| Contact **billing** zip | `Contact.Billing_Zip__c` | invoice address |
+| Contact **shipping** zip | `Contact.MailingPostalCode` | job / service address |
+
+`Contact.Billing_*` is populated from `Mailing*` by a **create-only** before-save flow when the
+billing fields are blank — so it is a snapshot taken at contact creation and never refreshed. The two
+agree on ~99.7% of contacts; where they differ, the billing copy is the stale one.
+
+**What actually resolves the territory** is `Opportunity.Estimation_Address__PostalCode__s`:
+
+```
+Opportunity (before-save, CREATE only)
+   if Estimation zip is null and the Opp has an Account
+      → copy Primary_Contact__r.Mailing{Street,City,State,PostalCode} into Estimation Address
+
+Opportunity (after-save, CREATE *and* UPDATE, no entry criteria → every save)
+   Zip_Code__c WHERE Zip_Code__c = Estimation_Address__PostalCode__s
+      → no row, or row with null Service_Territory__c  →  CUSTOM ERROR, transaction rolls back
+      → else sets Service_Territory__c, OwnerId, Estimator__c, AccountManager__c,
+            ProjectManager__c, PartnerManager__c, Pricebook2Id, Phone_Pricing_Only_Zip__c
+```
+
+Because it is **after-save with no entry filter, on update as well as create**, this is the org's real
+zip gate: it re-validates on every Opportunity save, forever, and a rollback here can kill an
+apparently unrelated save further up the chain (e.g. a WorkOrder write that updates its Opportunity).
+
+**It has four bypasses**, and they are easy to miss. The first element exits the flow — no territory
+assignment *and* no error — when any of these is true (`conditionLogic = or`):
+
+- `$User.UserType != 'Standard'` (portal/community users)
+- `$Profile.Name` = the field-rep profile — **so field reps editing an Opp are not checked**
+- `$Profile.Name` = a brand-specific profile
+- separately, a specific record type routes to a branch that sets the territory with no error path
+
+Plus: a **null** zip ends the flow silently. Only a *wrong* zip errors, never a missing one.
+
+**What the customer actually sees is a different field.** Every customer-facing document sources its
+"Project Address" from the **Contact's mailing** address, never from the validated Opportunity
+estimation address:
+
+| Document | "Project Address" resolves to |
+|---|---|
+| Quote, Contract (all brands) | `Contact.MailingPostalCode`, via `Quote.Shipping*` |
+| Work Order, Invoice, Receipt (all brands) | `Contact.MailingPostalCode` (direct) |
+| Change Order (all brands) | `WorkOrder.PostalCode` — which is fed from `Quote.Billing*`, i.e. the **billing** zip under a "Project Address" label |
+
+Nothing validates `Contact.MailingPostalCode` — no validation rule, no flow — and it is **not
+field-history tracked**, so post-creation drift is undetectable by construction. Consequence: the
+address the crew is routed by and the address the customer is shown can diverge with nothing
+flagging it.
+
+**⚠️ Leading zeros break the gate, and the break is invisible.** The zip lookup is an exact string
+match, so a NJ/NY zip stored as four digits (`8810` rather than `08810`) resolves to no
+`Zip_Code__c` row and reads as *unserviceable* rather than as *malformed*. Around **4%** of contacts
+carry a 4-digit zip in each of the mailing and billing fields. Two consequences worth separating
+before anyone "fixes" a serviceability rule:
+
+- Any zip-serviceability check will fire mostly on **formatting**, not geography. On one measured
+  population, of 117 blocked records only 12 were genuinely out of area — 73 were leading-zero
+  artifacts and 32 were blank.
+- The same records print a 4-digit zip on the customer's quote, contract, work order, invoice and
+  receipt.
+
+The right control is a **format** rule on the zip fields plus a zero-pad backfill — not a
+serviceability gate, which refuses legitimate out-of-area-owner / in-area-job work while leaving the
+formatting defect in place.
+
+**Diagnostic note:** `Zip_Code__c` carries the value twice, as `Name` and as `Zip_Code__c`, and
+different automations key on different ones. An active before-save flow errors when they disagree,
+and they currently never do — but check it before assuming two zip checks are equivalent.
 
 ## Corporate-name attribution (territory → billing entity)
 
@@ -397,6 +479,59 @@ horizon, "no edit recorded" means *unknowable*, not *unedited*. Before quoting a
 history, **split the population into covered and uncovered**, quote the rate only over the covered set,
 and label any extension to the uncovered set as an inference.
 
+**Measure the horizon, don't cite it.** It moves. Because it is a rolling window, any figure written
+down here is stale the day after it is written — take the earliest row directly
+(`SELECT CreatedDate FROM <Object>History ORDER BY CreatedDate ASC LIMIT 1`) whenever the answer
+matters. A stated "~<month>" in a doc can be a month off the real value.
+
+⚠️ **The worse failure is a derived metric that degrades silently rather than erroring.** Any
+"time in current state" calculation built on status history needs a fallback for records whose last
+transition predates the horizon, and the natural fallback is the record's created date. That
+fallback does not announce itself: for a population that is mostly older than the horizon, "days in
+current state" quietly *becomes* "days since created" while still carrying the original label. On one
+measured population **81% of records had no history row for their current status**, so the metric was
+reporting created-age for four records in five.
+
+### Field history logs value CHANGES, not write events
+
+A history row is created only when a field's value actually **differs**. Apex that assigns a value
+and calls `Database.update()` unconditionally — the common integration-endpoint shape — fires DML on
+every call, bumping `LastModifiedDate`/`LastModifiedById`, while writing the same value again
+produces **no history row at all**.
+
+So the two traces answer different questions, and the gap between them can be an order of magnitude.
+On one measured integration: **2,356 records last-touched by the endpoint's user vs 312 carrying a
+history row for the field it writes** — and retention did not explain it, since 2,302 of those
+postdated the horizon. Repeat deliveries (webhook retries, a customer performing the same action
+twice) are invisible to history by construction.
+
+**Never count integration events from field history.** History counts first-time transitions. To
+count *events*, you need a log the integration writes itself — and unless someone built one, it does
+not exist: a stock org has no custom log object, `EventLogFile` is empty without an Event Monitoring
+licence, and `ApexLog` needs an active trace flag and expires in ~24h.
+
+**Attribution fingerprint.** Writes from a Site endpoint carry the Site's guest user in
+`CreatedById`/`LastModifiedById`, which is a usable filter for "what did this integration do" — but
+only a **floor**, since any later edit overwrites `LastModifiedById`. Check whether other endpoints
+share the same guest user before treating it as exclusive to one integration.
+
+### A picklist can hold legacy values from a previous field type
+
+A field converted from Checkbox to Picklist keeps the old boolean strings in existing rows. One
+opt-in field carries **`TRUE`/`FALSE` alongside** its picklist values, where `FALSE` means *not*
+opted out — the opposite of the opt-out state a naive reader would infer. **Always `GROUP BY` a
+picklist before filtering on it**; do not assume the values are the ones in the field definition.
+Related: `ISNULL()` on a text/picklist field is always FALSE — use `= null` / `!= null`.
+
+Consequences worth checking before building on such a metric:
+
+- **Confirm what share of the population is actually covered** before treating the value as measured.
+- **A state-duration metric resets on every transition**, so it is unsafe as a queue-ordering or
+  prioritisation key — a record can be pushed to the back of the queue indefinitely by any touch that
+  changes state without doing the work. Created-age is monotonic and cannot be gamed that way.
+- The two are **not interchangeable**: created-age is always >= time-in-current-state, so swapping the
+  basis while keeping the threshold silently widens or narrows the population.
+
 ## ⚠️ Validation-rule formula traps — an Active rule is not an enforcing rule
 
 **`ISNULL()` on a Text field is ALWAYS FALSE.** Text fields are *blank*, never null — the null test is
@@ -472,8 +607,14 @@ true but a supporting field is missing, that is an exception worth surfacing, no
 - **`NOT LIKE` is not a valid operator.** `NOT (field LIKE '...')` is.
 - **Aggregate queries cannot page** (`queryMore` is unsupported) — invert to a filtered non-aggregate
   query or chunk by date.
-- **History objects:** `NewValue` is not filterable — filter in the client. Long text areas can be neither
-  filtered nor counted in SOQL.
+- **History objects:** `NewValue` is not filterable — filter in the client. The error is explicit
+  (`field 'NewValue' can not be filtered in a query call`), so this fails loudly rather than
+  silently. Long text areas can be neither filtered nor counted in SOQL. The practical consequence
+  is that any question of the form *"which records had X set and then cleared?"* must pull every
+  history row for the candidate ids and decide in code — which is the right shape anyway.
+- **You cannot `GROUP BY` a relationship field.** `GROUP BY Parent__r.Name` fails with
+  `field 'Name' can not be grouped in a query call`. Group by the lookup id (`Parent__c`) and map
+  ids to names client-side. Same for any dotted path in a `GROUP BY`.
 - **SOQL cannot compare two fields to each other** (e.g. work order owner ≠ opportunity owner) — fetch
   both and compare client-side.
 - **`CreatedDate = LAST_N_MONTHS:n` is a BOUNDED range that ends on the last day of the *previous*
