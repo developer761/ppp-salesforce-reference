@@ -433,9 +433,10 @@
 | AdName__c | Ad Name | Text(255) | No | — |
 | AdSetId__c | Ad Set Id | Text(255) | No | — |
 | AdSetName__c | Ad Set Name | Text(255) | No | — |
-| Agent__c | Agent | Text(60) | No | Agent responsible for unqualifying or converting the Lead. |
+| Agent__c | Agent | Text(60) | No | Full name of the call-center agent who set the Lead's final status. Written by the active flow `Lead.AgentFieldAutoUpdate` (after-save, **update only**), which stamps the **last modifier's** name only when their UserRole is `Call Center`. It is an **action** stamp, not an assignment stamp. **Blank means the lead was not worked by the call center** — typically a field-rep self-gen/repeat/referral lead — so `Agent__c != null` is the canonical "call center scope" filter. Measured over 8,893 conversions: zero mis-attributions against the user who actually ran the conversion, and blank on only 0.02% of call-center-owned resolved leads. Not history-tracked, and the field is directly writable, so hand-edited values are possible and unauditable. |
 | Assigne_Id__c | Assignee Id | Text(18) | No | — |
 | Cadence_Wait_Time__c | Cadence Wait Time | Date/Time | No | — |
+| CC_Lead_Stage__c | CC Lead Stage | Formula (Text) | No | Call-center funnel stage for booking-rate reporting: `Reached` / `Never Reached` / `Not Bookable`. **A converted lead is always `Reached`**, because `Unqualified_Reason__c` is *not* cleared when an agent re-works and converts a previously auto-unqualified lead — see the ⚠️ note on `Unqualified_Reason__c`. `Never Reached` = `Max call attempts`. `Not Bookable` = spam / duplicate / out-of-scope / out-of-service-area / seeking-employment / submitted-by-mistake / language-barrier / invalid-contact-info / legacy. Everything else (blank reason, or a reached-and-lost reason) is `Reached`. Added 2026-09-14. |
 | Count__c | Count | Formula (Number) | No | Formula: `1` |
 | County__c | County | Text(40) | No | — |
 | cps_Inquiry_Details_Notes__c | Inquiry Details/Notes | Text Area(32768) | No | — |
@@ -512,7 +513,7 @@
 | Time_To_First_Call__c | Time To First Call (Minutes) | Formula (Number) | No | Time to First Call in Minutes |
 | TimeNow__c | TimeNow | Formula (Date/Time) | No | Formula: `NOW()` |
 | TZOffset__c | TZOffset | Text(10) | No | — |
-| Unqualified_Reason__c | Unqualified Reason | Picklist | No | — |
+| Unqualified_Reason__c | Unqualified Reason | Picklist | No | ⚠️ **Not cleared on re-qualification.** The call center auto-unqualifies a lead after a call-attempt threshold, but agents keep working it and sometimes convert it — the stale reason stays stamped on the now-converted record. ~4% of conversions carry one, mostly `Max call attempts`. **Any report filtering on this field counts won leads as lost.** Always test `IsConverted` first; see `CC_Lead_Stage__c`. |
 | Voicemail__c | Voicemail | Lookup(VoiceCall) | No | — |
 | Zipcode__c | Zipcode | Text(30) | No | — |
 
