@@ -953,3 +953,94 @@ so a notes field is permanently invisible to any such claim. Record-modified tim
 substitute — they are contaminated by bulk updates, which cluster many records on a single date and
 make quiet records look recently touched. State what the rule actually tested (no start date, no
 attendance, no scheduled follow-up) rather than a broader claim about activity you cannot evidence.
+
+## A discard branch must distinguish "condition cleared" from "I didn't understand this"
+
+Every stage of this pipeline reads a human's free-text disposition off a review sheet and decides
+whether to act. The failure mode that keeps recurring is not a wrong decision — it is an
+**unrecognised input silently taking the discard branch** while the run prints a normal-looking
+tally. Four instances surfaced in a single run:
+
+- The verdict classifier tested one prefix (`startswith("yes")`) and sent **everything else** to
+  SKIP. The reviewer wrote a synonym — "Approved" — on an entire tab, so every row on it read as
+  dismissed and the apply step would have written **nothing**, under a tally that looked ordinary.
+- The email router had no branch for three rules, so their rows fell through to a gap test that
+  only grades rows carrying `Enter: <field>` tokens. Those rules carry none, the gap came back
+  empty, and the rows were dropped under the label **"resolved since the sheet"** — a positive
+  claim about records nothing had checked.
+- One unhandled rule aborted an entire apply run, taking dozens of unrelated approved rows with it.
+- A redirect pattern widened to case-insensitive then matched a **pronoun** in an unrelated note.
+  It was caught only because unresolvable targets had been made a hard failure rather than a
+  fallback.
+
+**The rule:** a pipeline that discards an item must separate *the condition genuinely cleared* from
+*this input is not understood*, and the second must be **reported loudly and acted on by nothing**.
+Give the classifier three outcomes, not two. Any free-text field a human writes into needs an
+explicit unrecognised branch, because the vocabulary **will** drift — and the drift is invisible
+precisely when it matters most, on the rows someone took the trouble to annotate.
+
+Two corollaries:
+
+- **Resolve an unrecognised note on the sheet, not in the script.** Prefix the reviewer's own words
+  with a recognised token and leave the original text underneath. Widening the vocabulary to admit
+  one sentence re-arms the trap for the next phrasing.
+- **A drop count is a claim requiring evidence.** When reading a run's output, ask which of the two
+  reasons produced it before believing the number.
+
+## A replay step that mutates the sheet must be idempotent
+
+The verdict column is written onto the workbook by a replay step that runs after each sweep. It
+inserted the column unconditionally, so running it twice — the normal way to check a rule change —
+produced **two** verdict columns, with the stale one still filtering as though it were live.
+
+Reusing the existing column when it is already in place is a two-line change, and the proof is
+cheap: run it twice and assert the column count and the tallies are unchanged. Any step that edits
+a file in place and is expected to be re-run needs this property and a test for it.
+
+## Approved rows can belong to a different executor — delegate, never abort
+
+Not every auto-fixable rule is a single field write. One status alignment (a won opportunity whose
+real work orders are all cancelled) requires a **three-step quote sequence** — unsync the quote,
+reject every non-rejected quote, then set the stage. A direct stage write is rejected by validation
+*and* still stamps the close date to today.
+
+Such a rule legitimately appears on the auto-fix tab, because that is where the reviewer approves
+it, but a different script executes it. Carry an explicit **delegated-rules** map: skip the row,
+print where it is actually executed, and continue. The alternative — treating an unknown rule as a
+fatal error — means one delegated row silently costs every other approved row in the run.
+
+Verify the overlap rather than assuming it: confirm the delegated row's parent record is in the set
+the other script proposes on the same day.
+
+## Route email by the record's live owner, with sheet-driven overrides
+
+Grouping outreach by the **live** owner rather than the sheet's snapshot is correct — ownership
+changes between sweep and send. But reviewers routinely want exceptions, and those belong on the
+sheet rather than in the code:
+
+- **Redirect** — "include in X's email", "email X", "send to X" re-routes that row to X.
+- **Co-recipients** — "send to X/Y" puts both on the To line.
+- **Quoted ask** — a quoted sentence in the disposition is sent verbatim, overriding generated
+  wording. The reviewer often knows exactly what they want said.
+
+Three constraints learned the hard way:
+
+- **Resolve a redirect target beyond the current run's owners.** Self-managed owners are excluded
+  from the sweep by design, so a target may own nothing in the run and still be a real person. Fall
+  back to a directory lookup on first name, then surname.
+- **An unresolvable target is a hard failure.** Falling back to the original owner is
+  indistinguishable from a redirect that worked.
+- **Guard the pronouns.** Matching a name after a verb like "tell" or "email" will capture "him",
+  "them" or "her" out of ordinary prose. Keep a stopword set.
+
+## Check the permission mode before diagnosing a blocked script
+
+An agent running in a restricted permission mode can have a script blocked by a **classifier that
+sits on top of the allow rules**, not by a missing rule. The signature is confusing: the same script
+runs or fails depending on incidental details of the command (a pipe, a redirect), and scripts that
+write to production are blocked even in dry-run mode.
+
+Read the actual settings files before proposing a permission change — the needed rule is often
+already present, in which case adding a narrower duplicate of it changes nothing. And treat "this
+process worked last month and does not now" as evidence of an **environmental** difference to go
+find, not a prompt to reach for a workaround.
