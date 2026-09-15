@@ -33,7 +33,7 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 8. Invokes the PDF scorer for Dbl_Check rows
 9. Generates the review packet xlsx (incl. the audit-gate tabs) + uploads to Drive `/BMCR Recon/` (sf_tx_before.csv snapshot taken first)
 10. **Does not write to SF** — the run stages proposed writes only; a human reviews the packet and runs the apply step to write approved rows (see "Audit gate")
-11. Posts run summary via Slack
+11. Emails the run summary to the admin account
 
 ---
 
@@ -155,9 +155,9 @@ Configured in `config/decision_rules.yaml`.
 | `python3 bmcr_recon.py --manual` | Force run regardless of date window |
 | `python3 bmcr_recon.py --csv path.csv` | Skip Gmail fetch, use local BMCR CSV |
 | `python3 bmcr_recon.py --sf-csv path.csv` | Skip SOQL pull, use local SF export CSV |
-| `python3 bmcr_recon.py --dry-run` | Produce the packet without Slack posts (the run never writes to SF regardless) |
-| `python3 bmcr_recon.py --apply reviewed.xlsx` | **Audit gate:** write ONLY the Approve==yes rows from a reviewed packet's "Proposed Writes" tab (state-change safety). Add `--dry-run` to build the payload without writing |
-| `python3 bmcr_recon.py --apply-gallons reviewed.xlsx` | Write ONLY the Approve==yes rows from the packet's "Gallons Backfill" tab. Hard-scoped to the gallons field; same state-change safety. `--dry-run` supported |
+| `python3 bmcr_recon.py --dry-run` | Produce the packet without sending notifications (the run never writes to the CRM regardless) |
+| `python3 bmcr_recon.py --apply` | **Audit gate:** write ONLY the Approve==yes rows from the reviewed packet's "Proposed Writes" tab (state-change safety). Reads the **live sheet** by default — see "the artifact a human reviews is the source of truth". A file path still works for replaying a historical apply. Add `--dry-run` to build the payload without writing |
+| `python3 bmcr_recon.py --apply-gallons <packet>` | Write ONLY the Approve==yes rows from the packet's "Gallons Backfill" tab. Hard-scoped to the gallons field; same state-change safety. `--dry-run` supported |
 | `python3 bmcr_recon.py --force` | Bypass already-ran-this-month guard |
 | `python3 bmcr_recon.py --revert YYYY-MM-DD --reason "…"` | Restore SF for that run (reason required) |
 | `python3 bmcr_recon.py --write-supplemental path.csv` | Apply a supplemental write CSV with state-change safety check |
@@ -188,16 +188,41 @@ python3 bmcr_recon.py --write-supplemental path/to/payload.csv
 
 ## Scorer disposition (verified → Approved / No_Paint)
 
-After `--scores` re-scores live SF, each scored row (`BMCR_Status__c IN ('Dbl_Check','No Points Awarded')`) gets an automated end-state disposition based on the scorer output in `results.csv` (`our_eligible_points`, `bm_credited_points`, `pdf_count`, `eligible_skus`, `notes`):
+**The disposition happens in the SAME write as the reconciliation, before anything reaches the system of record.** It used to run as a second pass after the status write, off a post-apply scorer workbook; that meant a row passed through an intermediate status and waited weeks for its real one, and the second-pass scripts drifted out of date between runs. Each scored row now gets its end-state proposed on the review packet itself, from the scorer output (`our_eligible_points`, `bm_credited_points`, `pdf_count`, `eligible_skus`, `notes`):
 
 - **Dbl_Check → `Approved`**, appending `BMCR_Notes__c = "Verified MM/DD/YYYY"`, when `our_eligible_points <= bm_credited_points` (the manufacturer credited at least what our invoice supports → accept, nothing more is owed). When `our_eligible_points > bm_credited_points` the purchase is **under-credited** → hold as a dispute (do not auto-approve).
 - **No Points Awarded → `No_Paint`** when the scorer note is clean **and** `our_eligible_points = 0` (invoice genuinely has no eligible product).
 
-**Verification guard — never auto-write a "0" that came from a failed read.** Hold (route to the reviewer review tab, not SF) any row whose scorer note is `UNKNOWN_VENDOR` (vendor not in the SKU map), `MULTI_INVOICE_PDF_FILTERED (1/N)` (only 1 of N bundled invoices scored — the rest unread), or `NO_PDF_ATTACHED` / `pdf_count = 0`, plus any No-Points row that still has `eligible_skus` populated (scorer found product on a zero-award → possible under-credit). A `0` from any of these is *unverified*, not *verified zero* — auto-writing `No_Paint` there would both mislabel the row and risk writing off points the retailer may still owe.
+**Verification guard — never auto-write a "0" that came from a failed read.** Hold (route to the reviewer tab, not the system of record) any row whose scorer note says the parser could not READ the invoice — vendor not in the SKU map, no attachment, empty/scanned text, or **no invoice block matched the reference** — plus any zero-award row that still has eligible SKUs populated (product found on a zero award → possible under-credit). A `0` from any of these is *unverified*, not *verified zero*.
+
+⚠️ **Do not hold a note that reports the parser SUCCEEDING.** A bundled PDF containing several invoices produces a "filtered N of M blocks" note, and that note means the parser found the right invoice among the others — the remaining blocks are *different invoices*, not unread parts of this one. It was on the hold list, and on one run it flagged 17 rows of which **16 had selected the correct block**; the real read-failure signal is "no block matched the reference" (1 row). Narrowing it cut the reviewer's queue from 27 rows to 11. The reviewer's rule: *"if it chose correctly, no need to flag that it chose correctly — only when it chooses incorrectly or can't find what it's looking for."* A review queue padded with successes trains people to skim it.
+
+**Score BEFORE the write, not after — and when you move it earlier, move its INPUTS too.** Running the eligibility scorer only after the status write means the reviewer approves a batch without ever seeing whether the manufacturer actually credited what the invoices support. Moving it ahead of the write takes two changes, and skipping the second silently inverts the result:
+
+1. **Drive the scorer off an explicit record-id list, not a live status filter.** Pre-write, the rows still carry their *old* status; the target status exists only as a proposed value on the staged row. A scorer filtering on live status matches none of them and returns a clean, entirely misleading zero.
+2. **Take the AWARDED figures from the staged row too.** The awarded points/volume fields are precisely what the pending write is about to set, so pre-write they read 0 or blank. Comparing an invoice read against them makes *every* row look short-changed. Measured on a real batch: **74 rows staged as disputes, every one false** — the invoice read matched the statement exactly. Pass the statement's awarded values in alongside the id list, and make the classifier **refuse** (raise, not warn) if a staged row is ever classified against the live-system source.
+
+The general rule: **pre-write, the system of record is not the source of truth for any field the run is about to write.** Anything read from it there is a *pre-image*, and comparing a computed value against a pre-image measures the pending change, not reality.
+
+**Post values regardless; let the comparison route the review, not the write.** The cleanest division is that the reconciliation write proceeds on its own rules, and the owed-vs-awarded outcome decides only whether a row *additionally* lands on a shortfall tab for the rebate-program contact to chase. Two separate decisions, two separate outputs — collapsing them means a scoring uncertainty can block a write that was never in doubt.
+
+**The two statuses are asymmetric, and that asymmetry is the whole design.** For a flagged-for-review row the manufacturer awarded *something*, so `gap = awarded − owed` and a positive gap is benign (they found eligible product the parser missed). For a zero-award row the award is zero *by definition* — so whatever the invoice read finds IS the gap. That status needs one "owed" column and **no gap column**; adding one invites a diff against a number that does not exist.
+
+**Volume figures are fractional — never int-cast them.** Rebate volume is awarded in fractional increments (quarts, sixteenths). Casting to int silently zeroes every part-unit line, and the loss is invisible because the column still looks populated. Same trap that forced a numeric field's precision to be widened after the first write. Keep them float end to end, and remember **blank is not zero**: a blank awarded-volume field usually means "nothing was awarded", but it is not a number you may subtract from, so a row with no reported volume must not produce a shortfall.
+
+**A success count is not a row count.** A bulk write reported `submitted=935 succeeded=935 failed=0` against a payload built from **969** rows. Nothing named the missing 34, and "0 failed" actively reassures — a *skipped* row is not a *failed* row, so it appears in no counter. All 34 were real writes that never happened. **Reconcile three numbers, not one: intended → submitted → succeeded**, and verify the end state by re-querying the target system rather than reading the job's own counters. Any `continue` that drops a row inside a write path must count and report what it dropped; a silent skip is indistinguishable from success at every layer above it.
+
+**A row that cannot be keyed cannot be written — say so loudly.** Rows resolved by hand had the transaction identified only in a *name* column and a reviewer note; the payload builder keys on record id and skipped blanks with a bare `continue`. Six rows sat on the approved tab looking staged and wrote nothing, and they were the rows that had cost the most human effort. When binding such a row later, **require a to-the-cent amount agreement before accepting an id** — a name typed in a note is not proof — and record any override of that check together with the human reason, so a later run can tell a deliberate exception from a mistake.
+
+**Prove an alert channel can send before trusting it.** A reconciliation's notifications had never worked: the API token the code actually read carried a purely read-only scope set (no write scope at all) while the module's own docstring claimed otherwise, it pointed at the wrong workspace, and an earlier incarnation had spent ~3 months posting to a decommissioned server. Nobody noticed through any of it, because **the symptom of a broken alerting path is silence — which is also the symptom of a healthy system**. Send a real message through the real credentials; config and documentation describe intent, not capability. And prefer one channel demonstrated to work over two assumed redundant: untested redundancy is a story, not a backup.
+
+**The artifact a human reviews is the source of truth — not the file that generated it.** The apply step read a spreadsheet file exported at run time, while the review, the sleuthing, the vetoes and the notes all happened in the live shared sheet. By apply time the file held 950 rows with none of the final statuses; the sheet held 969 with them. Applying the file would have written intermediate statuses to ~347 records and silently reverted a week of review. Read the live artifact, and log which source was used on every run. Two corollaries: **back the sheet up somewhere durable before regenerating it** (a prior backup went to a session-scoped temp directory and did not survive), and if any reviewer-typed column is not populated by the pipeline, regenerating **erases it silently** — the column still exists and still looks normal.
+
+**Widening a shared lookup tuple breaks every unpack site silently.** When a catalogue lookup returns a positional tuple consumed in several modules, add the new attribute as a **parallel dict keyed by the value the lookup already returns** rather than as a fifth tuple element. The parallel dict cannot break an existing caller; the wider tuple breaks each one at a different line.
 
 **Pass-through-retailer lines → `No_Paint`** via the No-Points path — this is the established reviewer standard, no special hook needed. The pass-through-retailer line earns nothing because the reward is submitted through the national wholesale account and lands on a **separate wholesale `Transaction__c`** (matched by invoice/Work-Order linkage, never by amount — the wholesale account is a wholesale channel). The credit is not lost; it's on the twin. See "Wholesale-account and pass-through-retailer transactions" below.
 
-**Held rows** go to a review tab in the scores workbook in the same column format as the `(scores)` tabs plus a `hold_reason` column, for a reviewer to copy into their review sheet.
+**Held rows** go to an `Owed vs Awarded` tab on the review packet itself, carrying awarded vs owed side by side for both points and volume plus the reason each row is there. They are ALSO on the write-staging tab and still get written — the tab routes review, it does not gate the write.
 
 > **OAuth scope note (corrected 2026-08-07):** this step was originally documented as "copy by hand, because the pipeline holds only `drive.file` scope and cannot write an existing external Google Sheet." That constraint **no longer holds** — the pipeline's OAuth token now carries the broad `drive` scope plus `spreadsheets`, so writing an existing external Sheet directly is possible. The manual copy is now a convention, not a technical limit.
 >
@@ -238,8 +263,8 @@ human reviews the **Proposed Writes** tab (default `Approve = yes`; strike/clear
 change-category), then applies:
 
 ```bash
-python3 bmcr_recon.py --apply "path/to/reviewed.xlsx"          # writes Approve==yes rows
-python3 bmcr_recon.py --apply "path/to/reviewed.xlsx" --dry-run  # build payload, write nothing
+python3 bmcr_recon.py --apply                       # reads the LIVE SHEET, writes Approve==yes rows
+python3 bmcr_recon.py --apply --dry-run             # build payload, write nothing
 ```
 
 Apply reads the reviewed values as-is (no re-run / re-classify), builds the payload from the `*NEW`
@@ -692,6 +717,28 @@ Additional notes:
 
 **An open state is not evidence that credit is coming.** Routing a row to No Action because its wholesale twin is still `Submitted` assumes that submission will be processed. Confirm the twin's `ReferenceId__c` actually appears as a **credited row on the current statement** first; an entire submission batch can go unprocessed, and without this guard the whole batch reads as "no action" while its credit is stranded. Reconciliation is two-directional — what was submitted and never processed is as much a finding as what was processed and never recorded.
 
+**Order the recovery steps by cost and certainty, and say which are last resorts.** A row settled from the statement alone must never pay for a document search, a mailbox search or a PDF download. A workable order: exact identifier match → same-distributor re-submission (statement-only) → document/Work-Order resolver → mailbox by invoice spellings → mailbox by **submission id** → exact identifier lookup in the CRM → the full receipt trace. The two cheapest steps resolve the most rows; the expensive ones exist for the residual.
+
+**A vendor writes the invoice differently on the statement than on the receipt, and each vendor is wrong in its own way.** Keep per-vendor spelling rules in a table keyed by vendor, always try the exact number first, and scope every rule to the vendor that demonstrated it — these rules trim REAL characters, so a rule leaking across vendors manufactures searches for invoices that never existed. **Collect hits across ALL spellings before choosing one:** twice an *unlabelled* copy under the exact number masked the *labelled* copy under a stripped form, and the label was what decided the row. Rank your own automated summary emails last — a digest that enumerates every invoice it processed matches almost any search and will otherwise be reported as "receipt found" for an invoice that has none.
+
+**A submission/batch identifier is a second, independent mailbox key.** It is not derived from the invoice, so it survives every transcription error — including invoices mangled beyond any spelling rule. Try it after the invoice spellings: an invoice hit is more specific, a submission covers a whole batch.
+
+**Recovering a mis-transcribed identifier: the amount selects, the similarity only confirms.** Query by exact amount first, then filter by edit distance — never the reverse. Sequential invoices inside one batch differ by exactly one character and look identical to a typo, so similarity can never be the selector. Require a to-the-cent amount agreement, exactly one survivor, a minimum amount below which the figure is too common to be evidence, and abort entirely if any record holds the statement's identifier exactly. Known transcription classes seen in practice: letter→digit substitutions in both directions, one letter read as two, and a punctuation mark read as a digit.
+
+**A last-resort lookup IDENTIFIES; it does not decide.** A lookup that deliberately ignores the pull's filters will reach records the pull excluded on purpose (zero-amount placeholders, credit memos, out-of-window rows, unflagged vendors). Naming the record is the whole value. Stress-tested at scale, allowing such a path to stage writes produced status **downgrades** on live records — the exact thing the auto-update rules forbid. Clear every proposed-change column on that path, require exactly one candidate, never bind onto a record already marked rejected, and never leave a row on the write tab with nothing to write.
+
+**Two more shapes worth stating plainly.** *The bar for filing a pass-through row is that its twin is NOT REJECTED, not that it is credited* — a twin still awaiting processing accounts for the purchase and will land on a later statement; only a rejection kills the credit. And *a warning is a note, not a gate*: a row that resolves should leave the review pile carrying its warning, because holding a solved row to convey a message makes the reviewer re-solve it every cycle.
+
+**Line items prove identity, not volume.** Matching SKU and quantity across two documents is strong evidence they describe the same purchase — far harder to fake than amount or date, which are exactly what fail on pass-through rows. It says nothing about how much was supplied: one validated pair matched perfectly on every SKU and quantity while the retailer shipped five-gallon units and the manufacturer billed single gallons, a 12-gallon gap on a 25-gallon purchase, in the one unit the manufacturer measures the contractor on. Compute volume separately, and compare only line pairs where **both** sides state a unit size — scoring an unstated size as zero inflates a real gap into a fictitious larger one, which is the same error class the check exists to catch.
+
+**A real amount means it is NOT a pass-through.** A `$0` pass-through is either a `$0` transaction in the CRM or **no transaction at all** — so a retailer transaction carrying a real amount is a direct purchase, and it matches the statement row whose **awarded/total amount equals that amount**, even when its stored reference number says otherwise. A reference keyed one digit off is common; the amount is the physical fact. The corollary matters more: a statement row with a blank or `$0.00` total and real awarded volume is the pass-through half, and binding it to a real-dollar transaction stages volume and points onto a purchase that did not earn them. Three such bindings were staged on one cycle before this rule was written down.
+
+⚠️ **A vendor's combined daily invoice PDF holds MANY invoices — parse only the page carrying yours.** Summing every page of one attachment produced a volume figure that reversed the conclusion twice: once against a prior correct note, once in favour of it. Both the `$0` pass-through page and the real-amount page live in the same file, and it is the per-page totals that separate them. Any helper that concatenates a whole document must not be used to judge a single invoice.
+
+⚠️ **When a stored conclusion and today's data disagree, get the primary document before choosing.** A note from a prior cycle recorded the opposite verdict on these same records. It was not wrong when written — it predated knowing that the `$0` row is the one with no CRM transaction. Neither the old note nor a fresh inference settles it; the receipt page does, and it was one function call away the whole time.
+
+**Read the destination before appending to it.** Moving reviewer-resolved rows onto a write-staging tab without first checking what that tab already held produced duplicate staged writes for a third of the batch, several of them a *second* confirmation number for a record that can hold one. Then deleting those duplicates — the rows having already been removed from the source tab — destroyed data outright, because a move is two operations and only the pair is safe. Related: a tab whose notes reference other rows **by row number** silently breaks when rows are removed; grep for such references before reordering.
+
 **A `$0` amount filter silently removes the pass-through population.** Where the SF pull mirrors a source report filtered to `Amount__c > 0`, every `$0` pass-through placeholder is excluded from the reconciliation — so the retailer side of each pair can never be matched or written, and those rows return to the review pile every month. Check the pull's amount filter before treating a recurring unmatched pile as a matching problem.
 
 ### Excluded non-BM retailer
@@ -857,9 +904,11 @@ Unmatched statement rows are then checked against the approved-invoice keys for 
 
 ---
 
-## Slack notification
+## Run notifications
 
-Run summaries DM the admin account directly. Group channel posts are disabled by default — to enable, add `chat:write` to the Slack app's user token scopes and reinstall the app.
+Run summaries, failures, reverts and apply confirmations are **emailed to the admin account**. There is no group post.
+
+⚠️ This replaced a Slack path that **had never worked** — the token the code read carried a purely read-only scope set (no `chat:write` at all), it pointed at a different workspace than the app that was meant to send, and an earlier incarnation spent ~3 months posting to a decommissioned server. Every failure was silent. Do not reintroduce a channel without sending a real test message through the real credentials first; see "prove an alert channel can send before trusting it".
 
 ---
 
