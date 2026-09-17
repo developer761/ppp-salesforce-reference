@@ -355,6 +355,29 @@ The right control is a **format** rule on the zip fields plus a zero-pad backfil
 serviceability gate, which refuses legitimate out-of-area-owner / in-area-job work while leaving the
 formatting defect in place.
 
+**⚠️ `Marketing_Active__c` is NOT the same test as "has a Service Territory."** They sound
+interchangeable and are routinely swapped. Measured against production 2026-09-16:
+
+| | count |
+|---|---|
+| `Zip_Code__c` rows | 2,195 |
+| with `Service_Territory__c != null` | **2,195 — all of them** |
+| with `Marketing_Active__c = true` | 1,620 |
+| territory assigned but **not** marketing-active | **575** |
+
+Every zip in the table routes. So an Opportunity carrying any of those 575 zips saves cleanly and
+picks up a territory, owner, estimator, AM and pricebook — while a serviceability check written
+against `Marketing_Active__c` calls the same zip unserviceable. The two flags mean different things:
+
+- **`Marketing_Active__c = true`** — we market there and the estimator is committed to the area.
+- **`Marketing_Active__c = false`, territory present** — we do not market there. The field has
+  accepted appointments in the zip before but will not commit to it consistently; zips get moved
+  into a territory for a single appointment and back out again. Treat it as **needs an estimator
+  decision**, not as a settled yes or no.
+
+Consequence for anything automating a serviceability answer: `Marketing_Active__c` is a three-state
+signal wearing a boolean, and neither `true` nor `false` is safe to surface to a customer on its own.
+
 **Diagnostic note:** `Zip_Code__c` carries the value twice, as `Name` and as `Zip_Code__c`, and
 different automations key on different ones. An active before-save flow errors when they disagree,
 and they currently never do — but check it before assuming two zip checks are equivalent.
