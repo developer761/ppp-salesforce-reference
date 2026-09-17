@@ -486,6 +486,47 @@ behind an explicit opt-in flag in the apply script so the routing hold cannot be
 accident, report them as *held* rather than dropping them silently, and put the question back to the
 approver.
 
+### Encode a granted exception as narrowly as the owner worded it
+
+A routing hold is often lifted by the owner themselves, in prose, in a reply to the very email the
+hold generated. That reply is the authority to write — and the moment it is most tempting to encode
+more than was actually said.
+
+An owner who self-manages was sent a batch surfaced by one close-readiness rule and replied, in
+effect: *"most of these are in <status>? if they are in that status they are done, you can close
+them."* The rule that surfaced the batch fires on **two** statuses. The owner named **one**.
+
+- **Key the exception on the condition the owner named, not on the rule that surfaced it.** Encoding
+  it as "this rule may now auto-fix for this owner" silently extends the grant to the sibling status
+  they never saw. Structure it as rule → *set of permitted states*, so the narrow case is the only
+  thing expressible and widening it later is a visible edit rather than an emergent one.
+- **A grant about readiness is not a grant about gates.** "They are done" answers whether the *work*
+  finished. It says nothing about the rule's safety conditions — the dormancy window, the payout
+  proportionality floor, completeness of close-out data. Those exist because the write is one-way,
+  and a record only reached the rule by passing them. Keep every one of them running; the grant
+  replaces the **routing** decision only.
+- **Check the owner's hedge against the data before relying on it.** "Most of these" was, on live
+  verification, *all* of them — so nothing in that batch was ambiguous. Verify which it is: if the
+  hedge is real, the un-named remainder is exactly the population the narrow encoding protects, and
+  you need to know that before writing rather than after.
+- **A grant from an owner is not the approval that a separate, wider hold was waiting on.** Where a
+  hold exists pending a *manager's* decision about excluding that owner wholesale, an owner asking
+  you to act on their records runs in the opposite direction and does not resolve it. Record the two
+  separately or the open question disappears.
+
+### An approval that arrives outside the review artifact needs its own population path
+
+The apply script's population is normally "rows the reviewer marked approved on the auto-fix tab."
+A flag-only owner's approval cannot arrive that way — their rows are, by construction, routed off
+that tab, so the approval comes back as prose in an email thread.
+
+Give that case an explicit population argument rather than hand-editing the sheet or writing a
+dated one-off script (which re-creates the drift the consolidated apply script eliminated). Make it
+loud in proportion to the audit trail it bypasses: require a free-text provenance argument, persist
+it in the run's result file next to the records written, and route the records through the **same**
+live per-rule verification as a sheet row. The alternate source changes *which* records are
+considered — never *whether* they qualify.
+
 ---
 
 ## Section 4b — Attendance-exempt corps — RETIRED
