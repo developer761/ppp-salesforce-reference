@@ -514,6 +514,60 @@ them."* The rule that surfaced the batch fires on **two** statuses. The owner na
   you to act on their records runs in the opposite direction and does not resolve it. Record the two
   separately or the open question disappears.
 
+### Grade the ask that was sent, not the state of the record now
+
+A follow-up phase that re-derives each row from its current rule gap is answering a different
+question from the one the recipient was actually asked. The two coincide for a plain data ask
+("this field is missing") and diverge everywhere else.
+
+Outreach of this kind has three shapes and only two of them owe an answer:
+
+| Shape | Owes an answer | Resolved when |
+|---|---|---|
+| "these need something from you" | yes — a data ask | the gap closes |
+| "a couple of questions" | yes — a **status** question | the status moves, **or** they answer |
+| "just putting these on your radar" | **no — an FYI** | never; nothing was requested |
+
+Re-deriving silently promotes an FYI into work the owner owes, and turns a status question into a
+missing-field chase. Measured on one send: **9 of 34 open rows would have been chased for the wrong
+thing.** It barely moves the headline — those records really are unresolved — but a reminder that
+asks for the wrong thing is how credibility with the field is spent.
+
+- **Record the ask shape where the ask is built**, not later. The section a row was placed in *is*
+  its shape, and that is only known at generation time. Persist it per record alongside the message.
+- **An FYI verdict must be independent of the record's current gap.** The gap may well still be
+  there — that is a finding for the sweep, not a debt for that person.
+- **A terminal status resolves any status question.** Asking "ready to move to X?" about a record
+  that has since reached the end state is answered: it went further than the move proposed. Without
+  this, a record closing between runs flips back to "open" and generates a follow-up asking someone
+  to move it somewhere it can no longer go. Encode it in the rule — patching the one row's target
+  list leaves the trap armed for every other question.
+
+### Follow-ups belong on the thread that carried the ask
+
+Everyone who was asked has a thread, whether or not they replied, and a reply lives on that same
+thread — so the **ask** is the single source that covers both cases. Sourcing the thread from
+*replies* threads only the people who responded, leaving the silent majority (exactly who a nudge is
+for) with brand-new emails stripped of the list they were originally sent. A reviewer will reject
+that batch and reply by hand instead, which is the correct instinct.
+
+Two mechanics that make it fail quietly:
+
+- A thread id **alone** does not thread a draft in Gmail. Without a matching `In-Reply-To` /
+  `References` chain it silently starts a new thread — which looks like success and is visible only
+  by opening the mailbox. Resolve the thread's last message id, and refuse to draft rather than emit
+  a detached follow-up.
+- **A step that reshapes a record will drop the field you just added.** A merge step rebuilding each
+  entry from a fixed set of keys discarded a correctly-resolved thread id with no error, and the
+  preview line looked normal. When a field is added upstream, check everywhere that rebuilds the
+  record, and confirm by printing the payload rather than trusting a summary line.
+
+### Sweep replies immediately before drafting, never from an earlier run
+
+Replies arrive on human time. Two owners answered *within the hour* of a nudge, both postdating the
+run that had classified them as silent; drafting from that run would have chased two people who had
+just responded. A classification of "no reply" is only as good as the minute it was computed.
+
 ### An approval that arrives outside the review artifact needs its own population path
 
 The apply script's population is normally "rows the reviewer marked approved on the auto-fix tab."
