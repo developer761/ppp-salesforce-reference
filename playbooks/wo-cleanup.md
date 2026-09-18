@@ -514,6 +514,29 @@ them."* The rule that surfaced the batch fires on **two** statuses. The owner na
   you to act on their records runs in the opposite direction and does not resolve it. Record the two
   separately or the open question disappears.
 
+### A read-only mode must be honoured by every write in the loop
+
+A long remote fetch deserves periodic checkpointing so one transient failure does not discard the
+whole run. But a checkpoint added for crash-resilience is a **write**, and it will fire on the
+read-only path too unless it is guarded — where the object being saved is usually an empty
+throwaway, so the "safe" mode quietly destroys the real artifact.
+
+Measured instance: a cache-equivalence check runs a live pass then a cached pass and diffs them. The
+live pass ran with caching disabled, its checkpoint saved the empty stand-in over the real cache,
+and the cached pass then found nothing, re-fetched everything, and the tool reported the two passes
+identical. A green verdict that compared live against live and proved nothing.
+
+- **The dangerous write is the one added later for an unrelated reason**, by someone not thinking
+  about the read-only path at all. Re-audit every write inside the loop when a dry-run flag exists.
+- **A verification tool is where an unexpected side effect does the most damage**, because its
+  output is trusted at exactly the moment you stop looking.
+- **Read the work a check did, not just its verdict.** The tell was in plain sight — the *cached*
+  pass reporting that it fetched every record — and a cached pass fetching everything is the whole
+  failure, printed as a status line.
+
+**An equivalence check must compare against a warm artifact.** Verifying a cache by rebuilding it
+inside the same run tests the write path twice and the read path never. Warm it, then verify.
+
 ### Grade the ask that was sent, not the state of the record now
 
 A follow-up phase that re-derives each row from its current rule gap is answering a different
