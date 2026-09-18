@@ -127,6 +127,22 @@ $16,000 on one WO). Testing on a single record will not reveal this.
 - **`Opportunity.LeadGroup__c`** *(self-gen bucket, updated 2026-05-21)*: `LeadGroup__c` ∈ {`'Self-Generated'`, `'Trade Show'`, `'Repeat'`, `'Referral'`} → **self-gen**; **every other value (and null) → marketing** (so self-gen + marketing always reconciles to the total).
 - The previously-flagged split is now in effect: `Repeat`, `Referral`, and `Trade Show` are counted as **self-gen** (relationship/earned leads), no longer marketing.
 
+⚠️ **This bucket is the reporting/KPI definition. It is NOT the test used to validate a
+self-generated commission claim** — that is a different, stricter rule and the two disagree in
+both directions. The commission test excludes customer referrals, treats a returning customer
+as conditional on what the *first* touch was, and counts signals this bucket does not carry.
+Reusing this bucket to approve a commission claim will pass claims that should be flagged.
+
+Two structural points that apply to any self-gen logic, wherever it lives:
+
+- **`LeadGroup__c` and `LeadSource` are different fields with different value sets.**
+  `Field-Generated`, `Customer Referral` and `Previous Customer` are **LeadSource** values;
+  `Self-Generated`, `Repeat`, `Referral` and `Partnership` are **LeadGroup__c** values. A rule
+  written against one field cannot be applied to the other by name.
+- **`Partnership` is a valid `LeadGroup__c` value on Lead but not on Opportunity**, yet
+  Opportunity records carry it. Describe-driven validation on Opportunity will not list it —
+  filter for it explicitly rather than assuming it cannot occur.
+
 ## ⚠️ Bulk Lead updates — what fires, and what doesn't
 
 Re-saving Leads in bulk (backfills, imports, mass field updates) runs every active Lead automation.
@@ -719,6 +735,14 @@ same zone on both sides — SOQL literals are UTC.
   total against a matching `SELECT COUNT()`; a round 50,000 in a result set is a red flag, never a
   coincidence.
 - **`NOT LIKE` is not a valid operator.** `NOT (field LIKE '...')` is.
+- **⚠️ `numericField != 0` MATCHES NULL ROWS.** SOQL's `!=` treats null as "not equal to 0", so a
+  filter meant to say *"has a value, and it isn't zero"* silently returns every record where the
+  field was never populated. Measured on a real pull: a `CommissionAmount__c != 0` filter returned
+  633 rows of which **520 had a null commission** — 82% of the result set was noise that then
+  aggregated to `$0.00` and made the totals look plausible. The zero sum is what hides it; a null
+  set that summed to something odd would have been caught immediately. Write
+  `field != null AND field != 0`, and sanity-check the row count against a
+  `WHERE field != null` variant before trusting any aggregate built on it.
 - **Aggregate queries cannot page** (`queryMore` is unsupported) — invert to a filtered non-aggregate
   query or chunk by date.
 - **History objects:** `NewValue` is not filterable — filter in the client. The error is explicit
