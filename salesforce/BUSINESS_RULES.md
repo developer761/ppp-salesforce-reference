@@ -196,6 +196,61 @@ should guard on the field being blank so vendor-supplied values are never overwr
 - Customer-facing `Case.Type` values only (6): `Estimator No Show`, `Waiting for Estimate`, `Dissatisfied Customer`, `Balance Owed`, `Service Call`, `Other`. Other types are deprecated IT-internal.
 - Link a case to a rep via **`Case.Opportunity__r.OwnerId`** (covers both no-show and service-call cases).
 
+## ⚠️ Case team membership is the access path — removing someone from a case team removes their access
+
+Case org-wide default is **Private**, and the org has **no Case sharing rules at all**. For anyone
+without View All Cases, and whose role does not sit above the case owner in the hierarchy,
+**case team membership is the only thing letting them open the record.**
+
+This is the trap behind the obvious-sounding request *"stop auto-adding X to case teams, they get too
+many emails."* Doing it literally also removes their ability to read the cases — usually the exact
+cases they said they wanted to keep reviewing. **Suppress the notification, not the membership.**
+
+Before concluding anyone can or cannot see a case, check all four, because any one of them can grant
+access on its own: OWD, sharing rules, `PermissionsViewAllRecords` on Case across their profile *and*
+every assigned permission set, and whether the case **owner's** role sits below theirs (hierarchy
+grants upward only, so a case owned by a role *above* someone gives them nothing).
+
+### What actually sends case email
+
+Four separate mechanisms, and a sweep that misses any one of them is incomplete:
+
+| Mechanism | Trigger | Recipients |
+|---|---|---|
+| Case-created email flow | Case create | case owner + **every case team member** + configured recipients |
+| Case-comment email flow | **CaseComment** create | case owner + **every case team member** + configured recipients |
+| Escalation email flow | Case → `Status = Escalated` | case team members + configured escalation list |
+| Email **Alert** via a record-triggered flow | Case create **and** update | `<type>caseTeam</type>`, optionally **scoped to one case team role** via `<recipient>` |
+
+- The comment flow triggers on **`CaseComment`, not `Case`** — a sweep filtered to Case-triggered
+  flows misses the one that generates the most mail.
+- The alert's recipients live in the **`WorkflowAlert`**, not the flow, so flow-level filtering can
+  never suppress it. A `caseTeam` alert scoped to a single role reaches only members holding that
+  role — so "it emails the case team" and "it emails this person" are different questions.
+- "Configured recipients" are addresses in `System_Setting__mdt` (category `Case Settings`), not
+  case team members. **They receive mail on every such event regardless of the case**, so no live
+  test of case notifications is ever silent.
+- Enumerate flows with `FlowDefinitionView` filtered on `TriggerObjectOrEventLabel`, never by API-name
+  prefix — naming does not indicate what a flow touches — and pair it with the object's
+  `WorkflowAlert` definitions.
+
+### Case team membership is flow-driven, not template-driven
+
+The predefined case team template carries **zero members**. Membership comes entirely from a
+record-triggered flow that reads role lookups off the **Service Territory** (resolved
+WorkOrder → Opportunity → Account). Two consequences:
+
+- A checkbox on Case (`Case_Team_Overwrite__c`) bypasses that flow entirely, for **all** roles at
+  once — it is a per-*case* switch, not a per-*person* one. It is also the clean way to build a
+  deterministic case team for testing.
+- Service Territory has role lookups for AM, Estimator, Project Manager and Partner Manager — but
+  **no Regional Manager field**. Regional Manager membership is assigned by a hardcoded user id in
+  the flow, gated on the Lead/Opp/WO owner's `ManagerId`. Changing who that is means editing the
+  flow, and nothing surfaces it when that person changes role or leaves.
+- ⚠️ **No `triggerOrder` is set on any Case flow.** The auto-add flow and the case-created email flow
+  both run after-save on insert in unspecified order, so whether the email sees any team members at
+  all is not guaranteed by configuration.
+
 ## Scheduling — Service Appointments and rep calendars
 
 The booking chain is **Lead → convert → Opportunity → WorkOrder → ServiceAppointment → AssignedResource → ServiceResource → User**. Service Appointments are parented to the **WorkOrder**, never directly to the Opportunity — FSL does not permit an SA→Opportunity link, so the work order exists purely to carry that relationship.
