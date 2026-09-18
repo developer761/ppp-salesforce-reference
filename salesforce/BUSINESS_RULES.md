@@ -142,6 +142,13 @@ Two structural points that apply to any self-gen logic, wherever it lives:
 - **`Partnership` is a valid `LeadGroup__c` value on Lead but not on Opportunity**, yet
   Opportunity records carry it. Describe-driven validation on Opportunity will not list it —
   filter for it explicitly rather than assuming it cannot occur.
+- **`LeadSource = 'Repeat Customer'` exists on Contact records but is not a Lead picklist
+  value.** Measured 2026-09-18: 126 Contacts carry it, zero Leads (the picklist value is
+  `Previous Customer`, on 1,915 Contacts and 3,218 Leads). It is a legacy string, so any
+  classifier built from the Lead picklist drops it into whatever its default bucket is —
+  typically *marketing* — and a returning customer then reads as a bought lead. Contacts are
+  exactly what a first-touch lookback searches, so this surfaces as wrong origin evidence
+  rather than as an error. Enumerate values from the data, not only from the picklist.
 
 ## ⚠️ Bulk Lead updates — what fires, and what doesn't
 
