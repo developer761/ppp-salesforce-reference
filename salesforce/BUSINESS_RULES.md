@@ -206,7 +206,8 @@ should guard on the field being blank so vendor-supplied values are never overwr
 ## Transactions (money flow)
 
 - **`Transaction__c`** record types: `Payment_In`, `Payment_Out`, `Purchase`.
-- Key fields: `Amount__c`, `Date__c` (period anchor), `PayeeType__c` (`Labor_Company` / `Reimbursement` / `Customer_Refund` / `Merchant_Fee`), `Payee__c` (Account lookup), `WorkOrder__c`, `Opportunity__c`.
+- Key fields: `Amount__c`, `Date__c` (period anchor), `PayeeType__c`, `Payee__c` (Account lookup), `WorkOrder__c` (required), `Opportunity__c`.
+- **`PayeeType__c` values (6):** `Sales`, `Labor_Company`, `Reimbursement`, `Referral_Fee`, `Customer_Refund`, `Merchant_Fee`. ⚠️ This list previously omitted `Sales` and `Referral_Fee`. `Sales` in particular is the value every rep-commission payout is written with, so a filter built off the short list silently returns zero rows — indistinguishable from "there were no payouts". Verified against production 2026-09-21.
 - **Label convention:** in any UI, expand to **"Payments / Payouts / Purchases"** — never abbreviate "transaction" to "tx".
 
 ## Reviews
