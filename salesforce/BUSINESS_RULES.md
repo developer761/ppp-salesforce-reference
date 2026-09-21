@@ -771,6 +771,18 @@ same zone on both sides — SOQL literals are UTC.
   open-ended and does include the current month. The `=` / `>=` distinction is the whole trap.
 - **Positive-control every zero from a date-filtered history query.** Re-run without the date filter
   before believing it. An empty result proves the filter matched nothing, not that nothing happened.
+- **`sf data import bulk` rejects CRLF, and fails the job whole.** The CLI opens the bulk job with
+  `LineEnding = LF`, so a CSV written with Windows line endings is refused at input validation:
+  `ClientInputError : LineEnding is invalid on user data. Current LineEnding setting is LF`. The
+  usual source is the generator, not the platform — **Python's `csv.writer` emits CRLF by default**
+  (`lineterminator='\r\n'`) even when the file is opened with `newline=''`. Nothing is inserted
+  when this fires, so the recovery is just to convert and re-run — but confirm the zero from the
+  org rather than inferring it from the error, then
+  `open(p,'wb').write(open(p,'rb').read().replace(b'\r\n', b'\n'))`.
+- **A bulk job's own result is not verification.** `successfulRecords: N` says the platform accepted
+  N rows, not that the data is right. Query the records back and assert against whatever roll-up
+  field the load was supposed to move; that is the only check that catches a load which succeeded
+  against the wrong parent records.
 
 ## ⚠️ AM role reassignment — scope, the picklist trap, and what fires
 
