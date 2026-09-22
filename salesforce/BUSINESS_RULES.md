@@ -475,8 +475,40 @@ against `Marketing_Active__c` calls the same zip unserviceable. The two flags me
   into a territory for a single appointment and back out again. Treat it as **needs an estimator
   decision**, not as a settled yes or no.
 
+🔴 **AND IT IS NOT A SERVICEABILITY TEST ON ITS OWN — CHECK `ServiceTerritory.IsActive` FIRST**
+(measured 2026-09-21). **338 zips carry `Marketing_Active__c = true` while their Service Territory
+is `IsActive = false`** — stale flags never cleared when a territory was retired. Reading the
+marketing flag alone therefore reports whole shut-down regions as serviced: every **TX** and **LA**
+territory is inactive, yet 131 of their zips still show marketing-active. A serviceability answer
+needs BOTH tests, in this order: territory active, *then* marketing active. The failure is silent
+and reads as a live market.
+
 Consequence for anything automating a serviceability answer: `Marketing_Active__c` is a three-state
 signal wearing a boolean, and neither `true` nor `false` is safe to surface to a customer on its own.
+
+### 🔴 BOOKING POLICY IS NOT THE SAME QUESTION AS SERVICEABILITY (decided 2026-09-21)
+
+The paragraphs above describe what the DATA means. This is what the business does with it, and the
+two are easy to conflate:
+
+**A zip is bookable when its Service Territory is ACTIVE and is not named `Out of Area`.
+`Marketing_Active__c` does not gate booking.** A marketing-inactive zip in an active territory takes
+the ordinary booking path — the same path as a marketing-active one.
+
+| zip | booking |
+|---|---|
+| territory ACTIVE, marketing active | book normally |
+| territory ACTIVE, marketing **inactive** | **book normally — same path** |
+| zip not in `Zip_Code__c`, or territory INACTIVE / `Out of Area` | not bookable; a human confirms with the estimator before any coverage is promised |
+
+⚠️ So the "needs BOTH tests" line above answers *do we market here*, not *may we book here*. Reading
+it as a booking gate refuses serviceable customers: measured across ~1,300 automated conversations,
+**30 of 38** that were routed down the not-serviced path sat in ACTIVE territories. Only 8 were
+correct — 2 inactive territories and 6 zips genuinely absent from the table.
+
+⚠️ **Normalise the zip before the lookup.** It is an exact string match, so ZIP+4 (`10530-2929`) and
+a 4-digit NJ/NY zip both resolve to nothing and read as *unserviceable* rather than as *malformed* —
+see the leading-zero note above.
 
 **Diagnostic note:** `Zip_Code__c` carries the value twice, as `Name` and as `Zip_Code__c`, and
 different automations key on different ones. An active before-save flow errors when they disagree,
@@ -800,6 +832,24 @@ same zone on both sides — SOQL literals are UTC.
   when this fires, so the recovery is just to convert and re-run — but confirm the zero from the
   org rather than inferring it from the error, then
   `open(p,'wb').write(open(p,'rb').read().replace(b'\r\n', b'\n'))`.
+- **The `sf` CLI prepends an update-availability warning to STDOUT, which breaks `--json` parsing.**
+  `› Warning: @salesforce/cli update available from X to Y` is emitted before the JSON body, so
+  `json.load()` dies on `Expecting value: line 1 column 2`. It looks like a malformed response from
+  the org. Strip everything before the first `{` (`sed -n '/^{/,$p'`) or pin the CLI version.
+- **Field aliasing works ONLY in aggregate queries.** `SELECT Foo__c f FROM ...` without an
+  aggregate fails with `only aggregate expressions use field aliasing`. In a plain query, select the
+  full path and walk the nested relationship objects in the response instead.
+- **⚠️ FSL CLEARS `ServiceAppointment.SchedStartTime` WHEN AN APPOINTMENT IS CANCELLED.** Measured:
+  of 2,990 cancelled appointments in one fiscal year, **26 still carried a scheduled time — under
+  1%**. So any question of the form *"when was this cancelled appointment supposed to happen?"*
+  returns null from the live record and silently reads as "it was never scheduled". The value
+  survives only in `ServiceAppointmentHistory` — take the last non-null `NewValue` at or before the
+  cancellation, else the `OldValue` of the clearing change. Recoverable on ~97% of cancel events.
+- **`ServiceAppointmentHistory.CreatedDate` is when the RECORD changed, not when the event
+  happened.** It cannot answer "was this cancelled in advance or on the day". Measured: 57% of
+  cancellations are stamped after the appointment slot had already passed, median ~15 days, with
+  71% landing in an 8-30 day bucket — that shape is bulk record cleanup, not a distribution of
+  real-world cancellations. Treat any timing conclusion drawn from it as unsupported.
 - **A bulk job's own result is not verification.** `successfulRecords: N` says the platform accepted
   N rows, not that the data is right. Query the records back and assert against whatever roll-up
   field the load was supposed to move; that is the only check that catches a load which succeeded
