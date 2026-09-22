@@ -638,6 +638,7 @@
 | Collections__c | Collections | Checkbox | Yes | — |
 | Collections_Status__c | Collections Status | Picklist | No | — |
 | ColorsReceived__c | Colors Received | Checkbox | Yes | Operational "ready to order materials" flag. ⚠️ When set by the colour-entry tool it fires **only if at least one colour landed in a structured colour field on a line item** — a notes-only submission does not flip it. See the trap below. |
+| Command_Center__c | Command Center | Formula (Text) | No | Renders a hyperlink to this work order's materials page in the Command Center hub. Sits in the **Coordination** section of the Work Order layout — this is how the field reaches the hub from Salesforce. ⚠️ The URL it builds carries the **15-character** record Id, not the 18; the hub resolves that by prefix match, so both forms work. A SOQL read returns the raw `<a href=…>` markup, which is normal for a `HYPERLINK()` formula. |
 | CommissionAmount__c | Commission Amount | Currency | No | — |
 | Contractor__c | Assigned Labor Crew | Lookup(Account) | No | — |
 | CoordinationCompleteDate__c | Coordination Complete Date | Date | No | — |
