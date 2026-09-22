@@ -107,6 +107,27 @@ no approval step, no trail beyond field history.
 value. They agree on some records and diverge on others (observed: standard $14,325 against custom
 $16,000 on one WO). Testing on a single record will not reveal this.
 
+## The Closed Won cascade — what fires when an Opportunity reaches `StageName = 'Closed Won'`
+
+PPP keys every won-transition automation on the literal picklist string `StageName = 'Closed Won'` (not `IsWon`). Verified against the Data Dictionary flow XMLs (prod snapshot 2026-07-10) + live prod Apex.
+
+**How an Opp usually reaches Closed Won (upstream, automatic).** When a synced Quote reaches Status `Approved`/`Accepted`, two flows drive the parent Opp to won — they overlap:
+- `Quote_SetOpportunityStageClosedWonOnApproved` (on Quote, RecordAfterSave) — sets `Opportunity.StageName = 'Closed Won'`.
+- `Opportunity_SetStageWhenQuoteSync` (on Opp, RecordAfterSave; entry: not-yet-won + `SyncedQuoteId` populated + `SyncedQuote.Status` in `Accepted`/`Approved`) — sets `StageName = 'Closed Won'`, `TotalAmount__c` ← `SyncedQuote.GrandTotal__c`, and `CloseDate` = today.
+
+**On the won transition — before-save (writes on the Opp itself):**
+- `Opportunity_SetCloseDateOnClosedWon` (flow) **and** `OpportunityService.setCloseDateWhenClosedWon` (Apex, `OpportunityTriggerHandler` beforeUpdate) — both set `CloseDate = TODAY()`. These are redundant; the flow and the Apex do the same thing.
+
+**On the won transition — after-save (the cascade):**
+- `Opportunity_WorkOrderWhenClosedWon` — the main one; fires only when a synced quote exists (`SyncedQuoteId` populated). From the synced Quote it creates **WorkOrder(s)** (mapping Account, Contact, `Opportunity__c`, `Corporate_Name__c`, `CostMaterials__c`, discount fields, `MaterialType__c`, `Materials_Included__c`, etc.), **WorkOrderLineItems** (from Quote Line Items), and **`Payment_Term__c`** records (from the quote's payment terms). Contact resolves Quote → Opp → `Primary_Contact__c`.
+- `Opportunity_SetAccountTypeOnClosedWon` — sets parent `Account.Type` → `Customer` (was Prospect) or `Repeat Customer` (was already Customer).
+- `Opportunity_Quota_Points_Record_Creation` — creates `QuotaPoints__c` (the $1 = 1 point rows) via subflows `Opportunity_TotalQuotaPointCheckSubFlow`, `FlowLib_CreateQuotaPoints`, `Opportunity_SubQuotaSubFlow`. Also re-fires if `TotalAmount__c` changes while won.
+- `Opportunity_AdCostDetailUpdate` (Closed-Won branch of a broader flow) — increments `AdCostDetail__c.ClosedWonCount__c` on the related ad-cost rollup.
+
+**Downstream (triggered by the WO created above, not by the Opp):** `WorkOrder_SetOpportunityFinancialFields` writes financial fields back up to the Opportunity — see the next section.
+
+**Reversal (fires when a won Opp is moved back off Closed Won):** `Opportunity_DeleteQuotaPoints` deletes the QuotaPoints created above, and `Opportunity_AdCostDetailUpdate` decrements `ClosedWonCount__c`. So re-opening a won Opp is not a no-op — it tears down the quota points.
+
 ## Opportunity financial fields are sourced from the WorkOrder (not a rollup)
 
 `WorkOrder.SetOpportunityFinancialFields` (RecordAfterSave, Create+Update) copies the triggering WO's values up to its parent Opportunity when the Opp is `Closed Won` and the WO Status ≠ `Canceled`:
