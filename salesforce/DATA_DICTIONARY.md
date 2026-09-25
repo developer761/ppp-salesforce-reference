@@ -618,6 +618,35 @@
 | TotalPrice__c | Total Price | Formula (Currency) | No | Formula: `IF( PriceOverride__c , PriceOverrideAmount__c , (Quantity * UnitPrice)+DisposalCost__c)` |
 | UnitOfMeasure__c | Unit of Measure | Picklist | No | — |
 
+> #### ⚠️ The scope text lives in `Description__c`, NOT the standard `Description` (verified in production 2026-09-24)
+>
+> Measured across **11,641 QuoteLineItems** (every line item on all quotes whose Opportunity had
+> `Date_Estimate_Sent__c` inside a 180-day window):
+>
+> | Field | Non-empty |
+> |---|---|
+> | standard `Description` | **0 of 11,641** |
+> | `Description__c` (custom, Text Area 32000) | 10,290 (88%) |
+> | `AreaLabel__c` | 7,629 (66%) |
+>
+> **This is the reverse of `WorkOrderLineItem`,** where the standard `Description` is the populated
+> one and `AreaLabel__c` is blank on a large share of rows. Any analysis or integration ported
+> between the two objects must re-map the field, and the failure is silent: reading the standard
+> `Description` on QuoteLineItem returns empty strings for every row rather than erroring, so a
+> text-matching measurement quietly reports near-zero instead of failing.
+>
+> `AreaLabel__c` on QuoteLineItem also frequently carries the substantive scope, not just a short
+> room name — values like `"Living room, foyer, guest bedroom and garden room."` or
+> `"Open Common Areas: Kitchen, Living, Dining Area"` are common. **Read `AreaLabel__c` and
+> `Description__c` together**; neither alone is complete.
+
+> #### `NumberClosets__c` / `NumberDoors__c` / `NumberWindows__c` are room attributes, not areas
+>
+> All three count features *within* the area a line item covers. A closet is not a separate room:
+> line text of the form *"paint walls, ceiling, trim, doors and closet interiors **in the
+> bedroom**"* describes one room. Any logic that counts distinct areas from line-item text must
+> exclude closet (and door/window) mentions, or it will score single-room lines as multi-room.
+
 
 ---
 

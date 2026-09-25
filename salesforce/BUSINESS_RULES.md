@@ -373,6 +373,24 @@ Separately, and reassuringly: the estimator's product-line pick is accurate. Onl
 exterior work orders carrying an interior line were genuinely wrong once checked against their line
 items, and the reverse direction was under **0.5%**.
 
+### ⚠️ `Product_Family__c` does not reliably identify commercial work
+
+The family picklist carries `Commercial Interior Painting` and `Commercial Exterior Painting`, but
+they are badly under-used: measured 2026-09-24 over a 180-day estimates-sent window, only **84 of
+203** estimates identifiable as commercial carried a `Commercial …` family. The rest were coded
+plain `Interior Painting`.
+
+Examples found coded as residential: a multi-floor office fit-out referencing IDF rooms, a
+lactation room and numbered touchpoint rooms on the 24th and 35th floors; a charter school; a
+restaurant storefront. **Filtering commercial on the family field alone will silently leave most of
+it in the population.**
+
+Where commercial has to be excluded, derive it from the line-item text as well — space types that
+only exist commercially (IDF/server/conference/break/locker rooms, restrooms, classrooms,
+cubicles, tenant, common area, reception, elevator lobby), alphanumeric office codes
+(`office 35A10`), floors of 5 or higher, or several distinct unit/apartment identifiers — and
+treat the family value as one signal among them rather than the answer.
+
 
 ## Geography / sales tax
 
