@@ -771,6 +771,56 @@ rather than erroring. Measured on one such rule: 43 of 974 flagged records had a
 silently took the wrong branch. **Prefer flagging over falling through**: if the primary condition is
 true but a supporting field is missing, that is an exception worth surfacing, not a default.
 
+## ⚠️ "Who is opted out" is a four-field question
+
+Opt-out state is spread across **custom picklists and standard checkboxes**, on both `Lead` and
+`Contact`. Querying the custom picklists alone — the obvious move, since they are the fields the
+data dictionary lists — materially undercounts who has opted out.
+
+| Channel | Fields that mean "opted out" |
+|---|---|
+| Email | `Email_Opt_In__c = 'Opt-Out'` **OR** `HasOptedOutOfEmail = true` |
+| SMS | `SMS_Opt_In__c = 'Opt-Out'` (no standard equivalent exists) |
+| Voice | `DoNotCall = true` — a **separate channel**; do not fold it into SMS |
+
+`HasOptedOutOfFax` exists but is 0 rows on both objects. `Contact.DNC_Notes__c` is free text, not a flag.
+
+**The two email signals disagree, and in opposite directions per object.** Measured 2026-09-25:
+
+| | picklist `Opt-Out` | checkbox `true` | agree | checkbox ONLY | picklist ONLY |
+|---|---|---|---|---|---|
+| Lead | 13,729 | 3,449 | 3,131 | **318** | 10,598 |
+| Contact | 2,775 | 11,130 | 2,693 | **8,437** | 82 |
+
+Leads are picklist-dominant; Contacts are checkbox-dominant. Using the picklist alone missed
+**8,755 records** — understating email opt-outs by roughly a third. There is no single field you
+can trust; take the OR.
+
+### `Email_Opt_In__c` is an opt-IN field carrying legacy booleans
+
+Beside the picklist values, `Contact.Email_Opt_In__c` holds legacy string booleans (~48.5k `FALSE`,
+~0.9k `TRUE`). These are opt-**in** values: `FALSE` records the absence of an affirmative opt-in.
+It is **not** evidence of an opt-out, nor of consent — it simply means no opt-in was captured.
+Only the literal `Opt-Out` is an opt-out. Reading `FALSE` as an opt-out sweeps in tens of
+thousands of people who never opted out of anything.
+
+### Opt-out is per channel — never cross them
+
+An SMS opt-out suppresses the phone; an email opt-out suppresses the email address. Collapsing a
+person to a single "opted out" flag suppresses channels they never opted out of. This is not
+academic: internal staff records commonly carry an SMS opt-out (from messaging tests) without an
+email opt-out, and some carry `HasOptedOutOfEmail` as well.
+
+**Filter your own email domains before loading any suppression list** — staff records appear in
+these queries like any other, and suppressing them blocks internal mail.
+
+### Provenance cannot be established from the org
+
+`SMS_Opt_In__c` / `Email_Opt_In__c` are **not history-tracked on `Lead`** — `LeadHistory` holds 0
+rows for them against ~1.5M rows overall (a true absence, not a query artifact). `ContactHistory`
+retains only ~17 months. A query reports what the org currently says; it cannot show who set a
+value or when. Treat an opt-out extract as current state, never as an audit trail.
+
 ## ⚠️ Deploy traps — a field can exist and still be invisible
 
 **Two profiles can share a name, and a metadata deploy picks by name.** An org can carry more than

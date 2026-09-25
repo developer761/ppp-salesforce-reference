@@ -291,6 +291,13 @@
 | SMS_Opt_In__c | SMS Opt-In | Picklist | No | — |
 
 
+**⚠️ Opt-out state also lives on STANDARD fields, which this table does not list.**
+`HasOptedOutOfEmail` (Checkbox, "Email Opt Out") and `DoNotCall` (Checkbox) both carry opt-out
+state alongside the custom `Email_Opt_In__c` / `SMS_Opt_In__c` picklists, and they disagree with
+the picklists often. Querying the picklist alone materially undercounts who is opted out.
+See **"Who is opted out" is a four-field question** in `BUSINESS_RULES.md`.
+
+
 <details><summary>Package fields on Contact (6)</summary>
 
 | API Name | Label | Data Type | Required | Description |
@@ -516,6 +523,13 @@
 | Unqualified_Reason__c | Unqualified Reason | Picklist | No | ⚠️ **Not cleared on re-qualification.** The call center auto-unqualifies a lead after a call-attempt threshold, but agents keep working it and sometimes convert it — the stale reason stays stamped on the now-converted record. ~4% of conversions carry one, mostly `Max call attempts`. **Any report filtering on this field counts won leads as lost.** Always test `IsConverted` first; see `CC_Lead_Stage__c`. |
 | Voicemail__c | Voicemail | Lookup(VoiceCall) | No | — |
 | Zipcode__c | Zipcode | Text(30) | No | — |
+
+
+**⚠️ Opt-out state also lives on STANDARD fields, which this table does not list.**
+`HasOptedOutOfEmail` (Checkbox, "Email Opt Out") and `DoNotCall` (Checkbox) both carry opt-out
+state alongside the custom `Email_Opt_In__c` / `SMS_Opt_In__c` picklists, and they disagree with
+the picklists often. Querying the picklist alone materially undercounts who is opted out.
+See **"Who is opted out" is a four-field question** in `BUSINESS_RULES.md`.
 
 
 <details><summary>Package fields on Lead (5)</summary>
