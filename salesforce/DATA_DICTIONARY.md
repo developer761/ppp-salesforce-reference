@@ -452,7 +452,7 @@
 | Financial_Year__c | Financial Year | Text(1300) | No | Formula: `if(OR(MONTH(DATEVALUE(CreatedDate))=2, MONTH(DATEVALUE(CreatedDate))=3, MONTH(DATEVALUE(CreatedDa...` |
 | Followup_Date__c | Followup Date | Date | No | — |
 | FormId__c | Form Id | Text(255) | No | — |
-| Inquiry_Notes__c | Inquiry Notes | Text Area(32768) | No | — |
+| Inquiry_Notes__c | Inquiry Notes | Text Area(32768) | No | **The customer's stated scope** — what they said they want done, and the field to read for job/scope on a new lead. Populated on ~92% of new Leads. ⚠️ **Not a clean customer-only field**: the call centre also writes into it while talking to the customer, so it accumulates agent shorthand alongside the original words (~10% of recent leads carry markers such as small-project / text-only / needs-unit-number / no-access notes). ⚠️ ~9% arrive as a raw web-form dump rather than prose, with the answer following an underscore-joined question key. A placeholder such as "Customer did not provide additional comments" occupies the field on a meaningful share of leads and is the ABSENCE of scope, not scope. Do not confuse with `cps_Inquiry_Details_Notes__c` (see that row). Not history-tracked, and directly writable, so a value cannot be assumed to predate the conversation. `Opportunity` carries a same-named field. |
 | Is_Assignee_Current_User__c | Is Assignee Current User | Formula (Checkbox) | No | Formula: `IF( CASESAFEID($User.Id) = Assigne_Id__c ,TRUE,FALSE)` |
 | Is_Assignee_Owner__c | Is Assignee Owner | Formula (Checkbox) | No | Formula: `AND( CASESAFEID(Owner:User.Id) = Assigne_Id__c)` |
 | IsPhoneEstimate__c | Phone Estimate | Checkbox | Yes | — |
