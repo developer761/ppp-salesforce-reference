@@ -821,6 +821,40 @@ rows for them against ~1.5M rows overall (a true absence, not a query artifact).
 retains only ~17 months. A query reports what the org currently says; it cannot show who set a
 value or when. Treat an opt-out extract as current state, never as an audit trail.
 
+## ⚠️ Guest Site endpoints — Apex bypasses object permissions
+
+A public Salesforce **Site** endpoint runs as that Site's guest user, and the guest user's profile
+is a misleading place to look for what it can do.
+
+Measured in PPP's org: the lead-endpoint guest profile grants **only `Lead` with `Edit = False`**
+(plus one unrelated object) and carries **no `Contact` permission row at all** — yet the opt-out
+endpoint updates both objects, and thousands of Contacts carry the guest user as
+`LastModifiedById`. Its real grants come from a permission set assigned to the guest user
+(`API_End_Point_Access`), which grants **Apex classes and zero object permissions**.
+
+**Why:** Apex runs in **system mode**. Object CRUD and FLS are *not* enforced unless the code
+enforces them (`WITH USER_MODE`, `WITH SECURITY_ENFORCED`, `Security.stripInaccessible`, or explicit
+`isCreateable()` checks). `with sharing` / `without sharing` governs **record-level sharing only** —
+it has no effect on object or field permissions.
+
+**Consequences worth knowing before you design or debug one:**
+
+- **To let a guest endpoint write a new custom object, grant the guest user the Apex class.** No
+  object permissions are required. Adding CRUD "to be safe" widens the guest user's surface for no
+  functional gain.
+- **Do not infer endpoint capability from the profile.** Check the permission sets assigned to the
+  guest user (`PermissionSetAssignment` → `SetupEntityAccess`), which is where Apex-class grants
+  usually live. A profile that looks empty can be fully functional.
+- **A sandbox guest profile that looks emptier than production is usually a red herring** for the
+  same reason — compare the assigned permission sets, not the profiles.
+- **Conversely, "it has no permissions" is not a security control here.** An unauthenticated Site
+  endpoint whose Apex does not verify a signature can write whatever its code writes, regardless of
+  profile. Signature verification and payload validation are the control; permissions are not.
+
+**Testing one in a sandbox is viable** when the sandbox carries the same Site (Active, same URL
+path prefix), the same guest user, the same permission set, and the Apex — verify all four before
+trusting a sandbox result as predictive.
+
 ## ⚠️ Deploy traps — a field can exist and still be invisible
 
 **Two profiles can share a name, and a metadata deploy picks by name.** An org can carry more than
