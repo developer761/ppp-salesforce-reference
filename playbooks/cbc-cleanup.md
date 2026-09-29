@@ -443,6 +443,32 @@ closing" while it was still firing. **A detector narrower than the decision it r
 always under-count itself**, and a staleness signal computed from it is not independent
 confirmation.
 
+⚠️ **Three more instances of the same mistake, all in the progress signal rather than the detector.**
+A ledger that decides "this rule has stopped misfiring" needs two facts per run — *was the rule
+exercised* and *did it diverge* — and every one of these faults came from taking them from different
+places, or from counting the wrong unit:
+
+- **Count reports, not job executions.** A QA job scheduled twice a day against a source report
+  published once a day re-scores identical rows on the second pass. Streaks came out ~2× inflated
+  (83 executions against 41 reports). Gate the scoring on the source report's own identifier.
+- **A reset branch reachable only by coincidence is worse than no reset.** "Did it diverge" was read
+  from a field set only when a row carried a matching standing annotation. Rules with no annotation
+  could never reset and accumulated indefinitely — one showed 47 consecutive clean passes against 24
+  rows that had actually diverged — while rules that *had* one reset on clean annotated rows that were
+  merely awaiting a reviewer. Read divergence from the verdict, which every row carries.
+- **Exercised is not fired.** A "times it has recurred since being flagged" count that tallies every
+  row carrying the rule id includes the clean ones. It overstated on four of four items and reported
+  one rule as the worst offender at 14 recurrences when its true count was zero — the number a human
+  reads to decide whether to chase the owner.
+
+**Close on positive evidence, and require two independent dimensions of it.** Rows measure how much
+evidence there is; passes measure how independent it is. Either alone is gameable by ordinary
+variation — five passes carrying one row each is five rows dressed up as five runs' worth, and one
+busy report can clear a row threshold by itself. Track resets alongside the streak so a rule that is
+genuinely fixed is distinguishable from one that is merely between failures. And never let a rule that
+was never *ruled on* close itself on a streak: that silently promotes an inference to standing policy,
+and an unconfirmed rule is exactly the one whose evidence is least trustworthy.
+
 The same canonicalization is applied to the **SF LS value** when comparing it to WC LS. If the SF value and the canonical form differ beyond capitalization (e.g., `vehiclewrap` vs `Vehicle Wrap`), the SF LS is updated to the canonical form. Case-only differences (e.g., `gmb` vs `GMB`) are treated as equivalent and left unchanged.
 
 ### WC Lead Medium
