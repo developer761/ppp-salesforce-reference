@@ -122,6 +122,49 @@ requested for "the last 2 days" can silently end at the previous evening, which 
 
 ---
 
+---
+
+## Two more fields that do not mean what their name implies
+
+Found while tracing inbound routing on the same instance. Both are the *same class of error* as
+`FromPhoneNumber` above — a field that looks authoritative and is actually a label.
+
+### An IVR-type attribute is a reporting label, not a routing decision
+
+The inbound flow stamps a custom attribute per menu digit (`NewLead` / `ExistingLead` /
+`AccountManager` / `Spanish`) and writes it onto the Salesforce call record. It is natural to read
+those values as *where the call went*. They are not. In this org, **digits 1, 2 and 3 all set the
+same target queue**; the attribute differs, the destination does not.
+
+So an "account manager" menu option can land in exactly the same general queue as "new lead", and
+every report grouping on that attribute will faithfully show three distinct intents being handled —
+while the routing behind them is identical.
+
+**How to apply:** to learn where a menu option goes, read the `UpdateContactTargetQueue` (or
+`TransferContactToQueue` / `TransferToFlow`) on that digit's branch. Never infer routing from an
+attribute the flow sets alongside it. And when told "option N goes to team X", check whether the
+flow agrees — a recorded menu can keep promising a destination years after the routing changed.
+
+### A queue-name field may mirror the telephony platform, not Salesforce
+
+`VoiceCall.QueueName` carries the **Amazon Connect** queue names, not the Salesforce queue names.
+Where the two systems have near-duplicate names (`Account Manager` vs `Account Manager Queue`,
+`Inbound Queue` vs `Inbound Calls`), it is easy to join or filter on the wrong one and get a clean,
+empty, wrong answer. **Do not join Connect and Salesforce queues on name**, and check which
+platform's vocabulary a field speaks before filtering on it.
+
+### Corollary: a queue can be alive for one direction and dead for the other
+
+A queue here shows ~26,000 outbound calls and **zero inbound since a hard cutover two and a half
+years ago** — it survives only to carry the outbound caller-ID override. Meanwhile its Salesforce
+counterpart is correctly staffed, and nothing routes inbound work to it. An inbound flow still
+targets it and has therefore not executed since.
+
+**How to apply:** when asked whether a queue is in use, split the answer by direction and give the
+date of the last call in each. "In use" hides a queue that is half dead, and a flow that targets a
+queue receiving no inbound is strong evidence **no number points at that flow any more** — which is
+checkable, because Connect exposes no number-to-flow association API.
+
 ## Checklist for "what number did the customer see?"
 
 1. Get the contact id — `VoiceCall.VendorCallKey`.

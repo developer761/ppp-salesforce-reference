@@ -891,6 +891,38 @@ business's. Where staff work a different zone from the user running the report, 
 hours off the real business day. Any reconciliation between a report and a SOQL query must use the
 same zone on both sides — SOQL literals are UTC.
 
+### The fiscal-year form of that trap — `THIS_FISCAL_YEAR` vs a UTC literal
+
+`INTERVAL_CURFY` / `THIS_FISCAL_YEAR` inherits the same rule, which bites specifically because the
+fiscal year starts at local midnight. With a Feb 1 FY start in US Central, FY begins
+`2026-02-01T06:00:00Z` — **not** `2026-02-01T00:00:00Z`. A cross-check written with the UTC literal
+sweeps in the 6-hour sliver belonging to the *previous* fiscal year.
+
+The symptom is the misleading part: the report and the query disagree by a handful of rows with no
+visible cause, which reads as a report defect. On one lead population it was **7 phantom rows**
+(plus one excluded test record) producing an unexplained 8-row gap — **the report was correct and
+the verification query was wrong.** Build the boundary in local time whenever cross-footing a
+report, and suspect this first when a reconciliation is off by a small, stubborn amount.
+
+### Report metadata has hard length limits that fail the DEPLOY, not the edit
+
+Deploying a `Report` component rejects over-long text with `Value too long for field`:
+
+| Field | Max |
+|---|---|
+| `name` | **40 characters** |
+| `description` | **255 characters** |
+
+Two consequences worth designing around. The errors surface **one at a time** — fixing `description`
+just reveals the `name` failure on the next attempt — and the message names the field but not the
+actual length, so it cannot be diffed against a limit without looking the limit up. Budget for both
+before generating report metadata: a self-describing report name plus a paragraph of caveats in the
+description will not fit, and the caveats are usually what you most wanted to record.
+
+Also useful: **`notEqual` with an empty value is how a report expresses "is not blank"** — an
+`operator notEqual` with `<value></value>`. This works on text and lookup columns, and is the
+counterpart to filtering for populated records in SOQL with `!= null`.
+
 ## SOQL / CLI traps
 
 - **`sf data query` silently caps at 50,000 rows, and under `--json` there is no warning at all.** The
