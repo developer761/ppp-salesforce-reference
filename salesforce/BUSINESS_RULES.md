@@ -63,7 +63,21 @@ Similarly, **do not use the `SDocs_User` permission set** to count SDocs license
 
 Two active flows materially affect when a WorkOrder can be safely modified from external tools (Command Center, integrations, scripts, data loads).
 
-**`WorkOrder_DisallowEditWhenClosed`** — RecordBeforeSave on Create+Update; entry filter `ISPICKVAL(Status, 'Closed')`. **Blocks ALL field updates** when WO Status is `Closed`, even single-field writes from external tools. WO must be in an open status for any write to land.
+**`WorkOrder_DisallowEditWhenClosed`** — RecordBeforeSave on Create+Update; entry filter `ISPICKVAL(Status, 'Closed')` (plus the Closed→open transition). Blocks field updates when WO Status is `Closed`, including single-field writes from external tools.
+
+⚠️ **It is NOT an absolute lock — it is permission-gated, and "closing is one-way" is false for anyone holding the bypass.** The flow is a decision with five allow-branches, and the running user's permissions decide which applies:
+
+| Branch | Grants |
+|---|---|
+| `Full_WO_Edit` | `$Permission.WorkOrder_AllowEditClosed` → **unconditional full edit of a Closed WO, any field.** |
+| `Edit_Reviews_Only` | `$Permission.WorkOrder_AllowReviewEdits` → the four review fields only (`RequestReview__c`, `Date_Review_Requested__c`, `Review_Platform__c`, `Requested_By__c`). |
+| `Edit_Date_Confirmed_with_Client` | `WorkOrder_AllowReviewEdits` → `ScheduleConfirmedWithClient__c`. |
+| `Not_already_Closed` | The record was not Closed before this save — i.e. the save that *closes* it is allowed. |
+| `Edit_COI_Field` | `COI_Needed__c` — **no `$Permission` check at all, so ANY user can change this field on a Closed WO.** |
+
+Only a user matching none of these hits the custom error. **Do not write "closed WOs are edit-locked" or "closing is unrecoverable" as an unqualified fact** — it is true for a field owner and false for a system administrator, and the distinction changes whether a close decision is reversible. Verify with `SELECT Assignee.Name FROM PermissionSetAssignment WHERE PermissionSet.Name = 'WorkOrder_AllowEditClosed'` rather than assuming; the holder list is small and is recorded in the private admin notes, not here.
+
+The close-readiness gates in the cleanup process (payout-proportionality floor, activity-recency gate, close-out data completeness) are still worth keeping — but their justification is that a premature close strands the **owner**, who genuinely cannot edit, and needs an admin to undo. It is not that the write is irreversible.
 
 **`WorkOrder_SendLetsGetStartedEmail`** — RecordAfterSave on Insert. Sends a customer-facing email to the Opp's Primary Contact when **all** of the following are true:
 - Opportunity `StageName = 'Closed Won'`
@@ -258,7 +272,7 @@ grants upward only, so a case owned by a role *above* someone gives them nothing
 
 ### What actually sends case email
 
-Four separate mechanisms, and a sweep that misses any one of them is incomplete:
+Five separate mechanisms, and a sweep that misses any one of them is incomplete:
 
 | Mechanism | Trigger | Recipients |
 |---|---|---|
@@ -266,6 +280,7 @@ Four separate mechanisms, and a sweep that misses any one of them is incomplete:
 | Case-comment email flow | **CaseComment** create | case owner + **every case team member** + configured recipients |
 | Escalation email flow | Case → `Status = Escalated` | case team members + configured escalation list |
 | Email **Alert** via a record-triggered flow | Case create **and** update | `<type>caseTeam</type>`, optionally **scoped to one case team role** via `<recipient>` |
+| **Scheduled** stale-case flow | Daily batch, cases open past a day threshold | configured escalation list **only** — never case team members |
 
 - The comment flow triggers on **`CaseComment`, not `Case`** — a sweep filtered to Case-triggered
   flows misses the one that generates the most mail.
@@ -275,9 +290,18 @@ Four separate mechanisms, and a sweep that misses any one of them is incomplete:
 - "Configured recipients" are addresses in `System_Setting__mdt` (category `Case Settings`), not
   case team members. **They receive mail on every such event regardless of the case**, so no live
   test of case notifications is ever silent.
+- The fifth mechanism is **schedule-triggered, not record-triggered**, so it has no trigger object at
+  all. Enumerating by `TriggerObjectOrEventLabel` — the method below — **cannot see it**. Any
+  "who gets case mail" sweep must add a separate pass over `TriggerType = 'Scheduled'` flows.
 - Enumerate flows with `FlowDefinitionView` filtered on `TriggerObjectOrEventLabel`, never by API-name
   prefix — naming does not indicate what a flow touches — and pair it with the object's
-  `WorkflowAlert` definitions.
+  `WorkflowAlert` definitions, **plus the scheduled-flow pass above**.
+- `FlowDefinitionView` is a **standard** object, not a Tooling object — querying it with
+  `--use-tooling-api` fails `INVALID_TYPE`. Its developer-name column is **`ApiName`**; there is no
+  `DeveloperName` on it. To read a flow's actual logic, take `ActiveVersionId` from it and then query
+  `SELECT Metadata FROM Flow WHERE Id = '<ActiveVersionId>'` **with** `--use-tooling-api`. Reading the
+  active version is the only way to confirm a change is live — a version number in a ticket note is a
+  claim, not evidence.
 
 ### Case team membership is flow-driven, not template-driven
 
@@ -295,6 +319,41 @@ WorkOrder → Opportunity → Account). Two consequences:
 - ⚠️ **No `triggerOrder` is set on any Case flow.** The auto-add flow and the case-created email flow
   both run after-save on insert in unspecified order, so whether the email sees any team members at
   all is not guaranteed by configuration.
+- **One user can hold two role lookups on the same Service Territory.** The flow de-dupes by
+  `MemberId`, so that user is added **once**, under whichever role is evaluated first — and the
+  other role then has **no member row on the case at all**. A case can therefore be missing an
+  entire role without any data being wrong. Do not infer "nobody covers this role" from an absent
+  membership row.
+- **The Regional Manager gate reads the *record owner's* `ManagerId`**, not the territory. An
+  Opportunity/Lead/WorkOrder owned by a **deactivated user, or by anyone with a blank `ManagerId`**,
+  silently yields no Regional Manager on the case — and nothing surfaces that it was skipped.
+
+### ⚠️ Case team membership at *flow time* is not the membership you query later
+
+The single most expensive trap in this area, hit twice. `Case_AddCaseTeamMembers` triggers on
+**Case save** — not on comment insert. A user who comments first and saves second creates the
+comment while the team is still **empty**, so `Case-comment email flow` fires with nothing to loop
+over. Observed gaps of **6–11 seconds** between comment and team creation, and once **8.5 minutes**
+between case creation and team creation.
+
+**Consequence: a case can show the right people on its team today and still be worthless as a test
+of any case-team-dependent automation.** Querying `CaseTeamMember` after the fact tells you the
+end state, not the state the flow saw.
+
+**Always compare timestamps before calling a case a test:**
+
+```sql
+SELECT Id, CreatedDate FROM Case            WHERE Id = :caseId          -- create-flow firing time
+SELECT CreatedDate     FROM CaseComment     WHERE ParentId = :caseId    -- comment-flow firing time
+SELECT Member.Name, TeamRole.Name, CreatedDate FROM CaseTeamMember WHERE ParentId = :caseId
+```
+
+If every `CaseTeamMember.CreatedDate` is **later** than the firing event, the team was empty when
+the flow ran and the observation proves nothing — a textbook `exercised = 0` null result. To build
+a case that *does* exercise the automation, set **`Case_Team_Overwrite__c = TRUE`** and hand-add
+the members before triggering the event, rather than hoping the auto-add wins the race. Include a
+**control member** who should still be notified; without one, "nobody got mail" is
+indistinguishable from the flow never firing.
 
 ## Scheduling — Service Appointments and rep calendars
 

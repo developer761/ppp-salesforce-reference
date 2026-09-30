@@ -188,7 +188,11 @@ WHERE OpportunityId = '<id>' AND Field = 'CloseDate'
 Filter in Python for records where `CreatedDate` matches today.
 
 ### `WorkOrder_DisallowEditWhenClosed` flow
-This record-before-save flow blocks edits to WOs in "Closed" status. Bypass requires `WorkOrder_AllowEditClosed` permission set.
+This record-before-save flow blocks edits to WOs in "Closed" status. Bypass requires the `WorkOrder_AllowEditClosed` permission set, whose `Full_WO_Edit` branch grants **unconditional edit of any field on a Closed WO**. A narrower `WorkOrder_AllowReviewEdits` grants the four review fields plus `ScheduleConfirmedWithClient__c`, and `COI_Needed__c` has no permission check at all.
+
+⚠️ **Therefore "closing is one-way / unrecoverable" is FALSE for an administrator**, and this playbook said otherwise in three places until 2026-09-30. The lock is real for a field owner and absent for a bypass holder, so whether a close is reversible depends entirely on *who* is asked to reverse it. Write the qualifier every time; the unqualified version has been re-derived from these docs and repeated to the process owner on multiple occasions.
+
+This does **not** weaken the close-readiness gates below. Their justification is corrected, not removed: a premature close strands the owner, who must escalate to an admin to get anything changed. That is a real cost — it is just not irreversibility.
 
 ### ST zip validation rule
 Changing `Opportunity.StageName` triggers territory validation. Some opps fail with:
@@ -220,7 +224,7 @@ PPP FY starts Feb 1 (FY26 = Feb 1, 2026 – Jan 31, 2027).
 
 ## Section 4 — Move WOs to Closed
 
-Real (non-estimate) WOs where the job is fully complete should move to `Status = 'Closed'`. Because the `WorkOrder_DisallowEditWhenClosed` flow blocks edits once a WO is Closed, this step is **two-step and never auto-closes**: export candidates → human validates → close only the approved Ids.
+Real (non-estimate) WOs where the job is fully complete should move to `Status = 'Closed'`. Because the `WorkOrder_DisallowEditWhenClosed` flow blocks edits once a WO is Closed *for everyone without the bypass permission* — which is every field owner — this step is **two-step and never auto-closes**: export candidates → human validates → close only the approved Ids.
 
 ### Auto-close criteria (all must be true)
 - `Status` NOT IN (Coordination, Scheduling, On Hold, Pending, Canceled, Closed)
@@ -502,9 +506,10 @@ them."* The rule that surfaced the batch fires on **two** statuses. The owner na
   thing expressible and widening it later is a visible edit rather than an emergent one.
 - **A grant about readiness is not a grant about gates.** "They are done" answers whether the *work*
   finished. It says nothing about the rule's safety conditions — the dormancy window, the payout
-  proportionality floor, completeness of close-out data. Those exist because the write is one-way,
-  and a record only reached the rule by passing them. Keep every one of them running; the grant
-  replaces the **routing** decision only.
+  proportionality floor, completeness of close-out data. Those exist because a premature close
+  strands the owner behind a permission they do not hold (see the flow note above — it is *not*
+  irreversible, it is reversible only by an admin), and a record only reached the rule by passing
+  them. Keep every one of them running; the grant replaces the **routing** decision only.
 - **Check the owner's hedge against the data before relying on it.** "Most of these" was, on live
   verification, *all* of them — so nothing in that batch was ambiguous. Verify which it is: if the
   hedge is real, the un-named remainder is exactly the population the narrow encoding protects, and
@@ -627,8 +632,9 @@ was dropped, so the parallel pass stayed executable for several days after it wa
 had drifted badly in the meantime. It was missing **two gates the main pass had gained**: the
 quiet-period activity gate (it proposed closing records that had taken payments within five days,
 one of them a five-figure payment the previous day) and the surface-only owner routing (it would
-have auto-written records for an owner who had been moved to flag-only). Because closing is one-way,
-either would have been unrecoverable.
+have auto-written records for an owner who had been moved to flag-only). Either would have taken an
+admin-level unwind to undo — not unrecoverable, as this section previously claimed, but well outside
+what the affected owner could fix themselves.
 
 **Generalisable rules:**
 - When a filter is removed to fix scoping, **check what that filter was propping up.** A workaround
@@ -761,9 +767,11 @@ business, not in a rule change.
 
 ### Payout floor — gate the auto-close, not the record after it closes
 
-A work order can satisfy every close-out test and still not be finished being **paid out**. Because a
-closed WO is edit-locked, a premature close is expensive to reverse — so the payout test belongs
-*before* the close, as a condition on the auto-close rule rather than as a separate finding on already-closed records.
+A work order can satisfy every close-out test and still not be finished being **paid out**. A closed WO
+is edit-locked *for the owner* (an admin with the bypass permission can still edit it — see the flow
+note above), so a premature close is expensive to reverse in practice: it takes an escalation, not a
+correction. The payout test therefore belongs *before* the close, as a condition on the auto-close rule
+rather than as a separate finding on already-closed records.
 
 ```
 payout ratio = TotalPayoutsForLabor__c / (quoted value with change orders
