@@ -625,3 +625,100 @@ programme of work where one rule was needed.
 - **`ACD_Checkover__c` on Opp is a formula** that produces the same value as `ACD_Checkover_Corp_Name__c` on the ACD record. The outside-territory lookup already handles this matching correctly, so the field isn't needed for assignment — but comparing `Opp.ACD_Checkover__c` to the assigned ACD's `ACD_Checkover_Corp_Name__c` can serve as a post-assignment sanity check.
 - **Opp upload batch conflicts on ACD** — a process (`Opportunity.AdCostDetailUpdate`) fires on ACD changes and SF limits updates to the same ACD record to 12 per batch. When many opps share the same ACD, some will fail with `DUPLICATE_VALUE`. Fix: extract the failed records from the SF bulk results file and retry them as a small standalone batch — the smaller batch stays within the limit.
 - **`Lead_Medium__c` case-normalization on write** — SF silently lowercases values written to this picklist (e.g., a bulk update of `CPC` lands as `cpc`; `Referral` lands as `referral`). `LeadGroup__c` and `LeadSource` do **not** auto-normalize — they store exactly what you write. Not a bug — script output for LM can use any case; SF handles it. Just don't rely on LM case downstream (query filters, comparisons) — normalize to lowercase.
+
+## A "protected source" list protects only what it is wired into
+
+A set of lead sources designated as never-to-be-overwritten is easy to misread as a guarantee. In this
+pipeline, membership in that set suppressed exactly one thing — the WhatConverts match — and nothing
+else. The no-WhatConverts-match rules that run afterwards never consulted it.
+
+That matters because a branch keyed on the **creator** rewrites the source unconditionally. Sources
+that happened to have their own branch earlier in the chain were safe; three protected sources that had
+no branch of their own were silently rewritten whenever a field user entered them.
+
+**The general rule, which has now produced the same bug twice:** a branch keyed on *who created the
+record* must sit below every branch keyed on *what the source says* that it could shadow. Membership in
+a protection list is not a branch. Before adding a source to such a list, check it also has a rule above
+the creator-keyed one — otherwise the list is documentation, not behaviour.
+
+⚠️ **The corollary that let it through review.** The review tool decided whether a change was
+pre-approved by substring-matching the rule name against the change description. "Source X → Field
+Generated" contains the name of an approved rule, so the overwrite of a protected source was presented
+as **pre-approved** and nobody needed to look at it. A substring match on a rule name is not a rule
+check, and a mechanism whose whole job is "you don't need to review this" has to be at least as careful
+as the thing it is excusing. Apply the protection in the approval lookup too.
+
+Blast radius here was one record, found by a human reading the row rather than by any automated check.
+Scope it the same way: bound the history query by date, filter in code, and positive-control the zero.
+
+## An unrestricted picklist accepts values that are not on the picklist
+
+Both `Lead_Medium__c` and `LeadSource` have `restrictedPicklist = false`. Salesforce therefore accepts
+any string written to them, with no error and no warning, and the value shows up in reports as though it
+were a real option. Two live consequences found in one pass:
+
+- A medium value supplied by the tracking platform was not an active picklist entry at all. It had been
+  written through for months. Org-wide the same concept was split across the valid value and the invalid
+  one at roughly 25:1.
+- A source label used by the clean-up rules as the "canonical" form is **also** not a picklist value.
+  The org is split near 2:1 between the readable label and the lowercase raw value — across both Lead
+  and Opportunity — which breaks any grouping or filtering by source.
+
+**Checks worth doing before trusting a canonicalization rule:** read the field's active picklist values
+from describe, confirm the value you write is one of them, and count how the org is actually split. A
+rule described as "legacy raw value → canonical label" is worth nothing if the label is the one that
+isn't real.
+
+⚠️ Consolidating onto one value is three steps, not two: add the intended value as active on **every**
+object that carries the field, migrate the records, **then deactivate the old value**. Skipping the
+third leaves exactly the two options you were trying to eliminate. And because the before-save
+classification flow re-derives the lead group from the source on every update, renaming the source
+re-runs that derivation — records whose group currently disagrees with the mapping will be changed as a
+side effect. Decide whether that is wanted before migrating, and note picklist changes are metadata:
+sandbox first.
+
+## Ad-cost reassignment: record WHY, because the causes are not interchangeable
+
+A single "ad cost detail reassigned" bucket is not reviewable — it collapses six different causes into
+one approval. Classify each change by comparing the old and new cost record on territory, type and
+month:
+
+| Reason | What it means |
+|---|---|
+| outside territory | the cost follows the opportunity **owner's** home territory, not the lead's |
+| wrong territory | the record sat on a territory that is neither the owner's nor the lead's; corrected to the lead's own |
+| wrong month | the cost record's month does not match the lead's creation month in local time |
+| no record → filled | there was no ad-cost record at all |
+| type | the lead group changed, so the cost type must follow it |
+| neither owner nor lead | a deliberate per-owner exception routing to a different region |
+
+Reporting the reason per row removes a standing question from every review cycle, and the distribution
+is itself diagnostic — if one cause dominates every run, something upstream is producing it.
+
+## Verify a timezone fix in every system that writes the field, not just your own
+
+A month-boundary bug — reading a UTC timestamp's month instead of converting to the business timezone
+first — was found and fixed in the clean-up script. Months later the same defect surfaced again, in a
+different system writing the same field: records created late in the evening local time on the last day
+of a month (which is already the next day in UTC) were allocated to the following month's ad spend.
+
+Ours was correct; theirs was not, and the clean-up was quietly undoing it every run. **A fix to shared
+data is only complete once every writer of that field has been checked.** The signature is easy to test
+for: take records whose local-time month and UTC month differ, and look at what the dependent field was
+set to.
+
+## History objects: `OldValue` / `NewValue` cannot be filtered
+
+On `LeadHistory` and `OpportunityFieldHistory`, a `WHERE` clause on `NewValue` raises
+`field 'NewValue' can not be filtered in a query call`. The same clause on **`OldValue` silently returns
+zero rows** instead of erroring — which reads exactly like "no such changes exist."
+
+**Bound these queries by `CreatedDate` (and `Field`) and filter the values in code.** A hand-built
+history filter returning zero needs its positive control against a known case before the zero is
+reported as a finding.
+
+Two more properties of these objects worth knowing together: a lookup field's change renders as **two
+rows** for one event (one carrying the name, one the id), so counting rows double-counts; and a field
+that is not history-tracked produces no rows at all, so "no history" is not evidence the value never
+changed. Confirm tracking before using history as proof.
+
