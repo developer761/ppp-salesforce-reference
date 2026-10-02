@@ -707,18 +707,26 @@ data is only complete once every writer of that field has been checked.** The si
 for: take records whose local-time month and UTC month differ, and look at what the dependent field was
 set to.
 
-## History objects: `OldValue` / `NewValue` cannot be filtered
+## History objects: neither `OldValue` nor `NewValue` can be filtered
 
-On `LeadHistory` and `OpportunityFieldHistory`, a `WHERE` clause on `NewValue` raises
-`field 'NewValue' can not be filtered in a query call`. The same clause on **`OldValue` silently returns
-zero rows** instead of erroring — which reads exactly like "no such changes exist."
+Verified from describe on both `LeadHistory` and `OpportunityFieldHistory`: `OldValue` and `NewValue`
+are `anyType` with **`filterable = false`**. Any `WHERE` clause on either — `=` or `IN` — fails with
+`field '<name>' can not be filtered in a query call`. They are `sortable`, and `Field`, `DataType` and
+`CreatedDate` are filterable and groupable.
 
-**Bound these queries by `CreatedDate` (and `Field`) and filter the values in code.** A hand-built
-history filter returning zero needs its positive control against a known case before the zero is
-reported as a finding.
+**So bound these queries by `CreatedDate` and `Field`, and filter the values in code.**
 
-Two more properties of these objects worth knowing together: a lookup field's change renders as **two
-rows** for one event (one carrying the name, one the id), so counting rows double-counts; and a field
-that is not history-tracked produces no rows at all, so "no history" is not evidence the value never
-changed. Confirm tracking before using history as proof.
+⚠️ **Do not route the CLI's stderr into a file you then parse.** A pipeline of the shape
+`sf data query ... 2>&1 | grep -v Warning > out.csv` puts the *error text* into the CSV, and the
+pipeline's exit status is the last command's (`grep`, 0) — so the failure is invisible. A CSV reader
+then parses the error as a few rows with nonsense headers, and a client-side filter like
+"skip rows with no `Id` column" discards them, yielding **zero rows from a query that never ran**.
+That is indistinguishable from a true empty result and reads as a finding.
 
+Check the query's own exit status, keep stderr out of data files, and positive-control a zero against a
+case known to exist before reporting it.
+
+Two further properties of these objects, worth knowing together: a **lookup** field's change renders as
+**two rows** for one event (one carrying the name, one the id), so counting rows double-counts; and a
+field that is **not history-tracked** produces no rows at all, so "no history" is not evidence the value
+never changed. Confirm tracking before using history as proof of absence.

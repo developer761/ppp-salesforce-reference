@@ -999,7 +999,7 @@ counterpart to filtering for populated records in SOQL with `!= null`.
   `WHERE field != null` variant before trusting any aggregate built on it.
 - **Aggregate queries cannot page** (`queryMore` is unsupported) — invert to a filtered non-aggregate
   query or chunk by date.
-- **History objects:** `NewValue` is not filterable — filter in the client. The error is explicit
+- **History objects: NEITHER `OldValue` NOR `NewValue` is filterable.** Both are `anyType` with `filterable = false` on `LeadHistory` and `OpportunityFieldHistory` (verified from describe). Any `WHERE` on either, `=` or `IN`, fails with `field '<name>' can not be filtered in a query call`. Filter in the client; bound the query on `Field` and `CreatedDate`, which ARE filterable. ⚠️ Do not read the asymmetry the other way: an earlier note here said only `NewValue` was unfilterable, which implies `OldValue` is — it is not, and the apparent "silent zero" that suggested otherwise was a shell pipeline swallowing the error (`2>&1 | grep … > out.csv` puts the error text in the CSV and exits 0), not Salesforce behaviour.
   (`field 'NewValue' can not be filtered in a query call`), so this fails loudly rather than
   silently. Long text areas can be neither filtered nor counted in SOQL. The practical consequence
   is that any question of the form *"which records had X set and then cleared?"* must pull every
