@@ -185,6 +185,29 @@ Two structural points that apply to any self-gen logic, wherever it lives:
   exactly what a first-touch lookback searches, so this surfaces as wrong origin evidence
   rather than as an error. Enumerate values from the data, not only from the picklist.
 
+## ⚠️ Counting open Leads — `IsConverted = false` is not "open"
+
+`Status = 'Unqualified'` is the org's **terminal** lead state, and it dominates the unconverted
+population. Filtering on `IsConverted = false` to mean "still open" therefore overstates live leads
+by roughly **250×**:
+
+| `Status` (unconverted, org-wide, measured 2026-10-01) | count |
+|---|---|
+| `Unqualified` | **55,668** |
+| `Open` | 222 |
+| `Qualified` | 7 |
+
+On one territory this turned a reported "1,294 open leads" into **8** — and 6 of those 8 were
+duplicate records of a single person created the same day, leaving 3 real people, none touched in
+over a year. The error is dangerous because the inflated number is plausible and arrives attached to
+a real filter, so it reads as a finding rather than a mistake.
+
+**Always break Leads down by `Status` before quoting any count**, and sanity-check survivors for
+duplicates and last-touched date before calling them live. Related: `Unqualified_Reason__c` is *not*
+cleared when an agent re-works and converts a previously auto-unqualified lead (see
+`DATA_DICTIONARY.md`), so the two fields fail in opposite directions — status overstates death,
+the reason field overstates it on records that actually converted.
+
 ## ⚠️ Bulk Lead updates — what fires, and what doesn't
 
 Re-saving Leads in bulk (backfills, imports, mass field updates) runs every active Lead automation.
@@ -490,6 +513,41 @@ Opportunity (after-save, CREATE *and* UPDATE, no entry criteria → every save)
 Because it is **after-save with no entry filter, on update as well as create**, this is the org's real
 zip gate: it re-validates on every Opportunity save, forever, and a rollback here can kill an
 apparently unrelated save further up the chain (e.g. a WorkOrder write that updates its Opportunity).
+
+⚠️ **But it does NOT reassign on every save — on an update it usually exits before doing anything.**
+The pseudocode above is the create path. On update there is an early exit
+(`ISNEW = false AND Service_Territory__c == <the ST the zip resolves to>`) that ends the flow with
+**no writes at all**. So the four outcomes of any Opportunity update are:
+
+| zip resolves to | what the flow does |
+|---|---|
+| null zip | exits silently — no assignment, no error |
+| no `Zip_Code__c` row, or row with null ST | **custom error, whole transaction rolls back** |
+| **the same ST already on the record** | **early exit — zero side effects** |
+| a **different** ST | rewrites `Service_Territory__c`, and *conditionally* the owner and role fields below |
+
+This distinction is the difference between "every Opp save rewrites the owner" (false, and it reads
+as alarming) and "only a save whose zip resolves to a different territory does" (true). Measured over
+316 single-field stage updates: 307 hit the early exit with no side effects, 9 reassigned territory,
+and **0** changed owner. Pre-resolve the zips before any bulk Opportunity write and you can state the
+side effects in advance rather than discovering them in a diff.
+
+🔴 **Each role field is independently gated on that role-holder being ACTIVE.** In the reassign
+branch the flow writes a field only if the target territory's user for that role has
+`IsActive = true` — and the owner additionally requires `ManuallyAssigned__c = false`:
+
+| field written | condition |
+|---|---|
+| `OwnerId` + `Estimator__c` | resolved ST's `Estimator__r.IsActive` (or `PhoneEstimator__r.IsActive` when `IsPhoneEstimate__c = true`) **and** `ManuallyAssigned__c = false` |
+| `AccountManager__c` / `ProjectManager__c` / `PartnerManager__c` | that ST's corresponding role user is non-null **and** `IsActive = true` |
+
+**Consequence: deactivating a user silently stops every territory they are named on from routing.**
+No error, no warning — new Opportunities in that territory simply keep whatever owner created them
+and get no estimator, AM, PM or partner manager. This is not hypothetical: at least one `IsActive`
+territory in the org currently has all four role fields pointing at a user deactivated long ago, and
+it had been assigning nothing for months before anyone looked. **Before deactivating any user, query
+`ServiceTerritory` for every role field referencing them** and name a replacement, or the territory
+dies quietly.
 
 **It has four bypasses**, and they are easy to miss. The first element exits the flow — no territory
 assignment *and* no error — when any of these is true (`conditionLogic = or`):
