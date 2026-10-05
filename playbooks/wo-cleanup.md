@@ -171,6 +171,34 @@ These two flag-only checks plus Rules 1/2 make the recurring run consume every c
 
 A synced quote fights the stage change and triggers a bounce-back. `Opportunity_SetCloseDateOnClosedWon` (record-before-save flow) fires during the bounce and stamps `CloseDate = today`, corrupting it even though the stage change ultimately fails.
 
+**The bounce completes inside one transaction and the API reports success.** Field history shows
+three rows on a single timestamp — that is the signature to recognise it by afterwards:
+
+```
+StageName  Closed Won       -> Opportunity Lost    at T
+StageName  Opportunity Lost -> Closed Won          at T   <- re-won
+CloseDate  <original>       -> <today>             at T   <- the re-win stamps today
+```
+
+**Two flows do the re-winning, and each step of the sequence below kills one of them** — which is
+why one step alone is not enough:
+
+- `Quote_SetOpportunityStageClosedWonOnApproved` (Quote after-save, Status Approved/Accepted) →
+  neutralised by **rejecting** the quotes.
+- `Opportunity_SetStageWhenQuoteSync` (Opp after-save, `SyncedQuoteId` populated + synced quote
+  Approved/Accepted) → neutralised by **unsyncing**.
+
+`Opportunity_SetCloseDateOnClosedWon` is the *stamper*, not the cause — it fires on the re-win into
+Closed Won, which is why the corruption only appears when the bounce happens.
+
+⚠️ **A drifted close date on a Lost opp is bounce damage, not a convention.** Measured on 20 recent
+cancelled-to-Lost opps: 12 retained their original close date, 8 were stamped to the cancellation
+date. There is no rule that moves a cancelled opp's close date — preserve the original. Because the
+API cannot distinguish the two outcomes, **any stage change off Closed Won must read the close date
+back afterwards**; a success response is not evidence. Restoring it is a *standalone* close-date edit,
+which `Close_Date_Uneditable_after_Closed_Won_L` permits only for holders of the admin-bypass
+permission — so the repair is available to an administrator and not to a field owner.
+
 **Always use this 3-step sequence:**
 ```
 1. Opportunity.SyncedQuoteId = null   →  update Opp  (unsync)
@@ -1170,3 +1198,82 @@ Read the actual settings files before proposing a permission change — the need
 already present, in which case adding a narrower duplicate of it changes nothing. And treat "this
 process worked last month and does not now" as evidence of an **environmental** difference to go
 find, not a prompt to reach for a workaround.
+
+---
+
+## A routing carve-out must reach every consumer, not just the detector
+
+An owner who self-manages can be put on **flag-only** routing: every rule still applies to their
+records, but anything that would be auto-written is surfaced for a human instead. When that owner
+later releases a *class* of record ("if they are in that status, they are done, you can close
+them"), the grant is encoded as a narrow predicate — rule **plus status**, never rule alone, so a
+sentence about one status cannot silently widen to a sibling status the same rule also fires on.
+
+The predicate landed in the shared owners module and in the detection sweep. It did **not** land in
+the close exporter, which imported the flag-only *name list* and did a bare
+`if flag_only: return FLAG`. For two weeks the close half withheld work orders the owner had
+explicitly released, with a reason string still citing a hold that no longer applied to them.
+
+This is the fourth instance of one failure in this pipeline: an attendance threshold, a payout
+floor, a per-profile review exemption, and now a routing carve-out — each shipped to the detector
+and not to the writer. The detector and the writer are different scripts with overlapping rules, so
+**every rule change has two or more landing sites and the forgotten one is silent.**
+
+- **A shared module is only shared if every consumer calls the predicate.** Importing the *data*
+  (`FLAG_ONLY`) and re-deriving the *decision* locally defeats the extraction entirely. Grep for
+  every importer of the module and check each one calls the function, not just reads the constant.
+- **The failure direction is not always a bad write.** Three of the four instances caused records to
+  be wrongly *withheld* — a withheld record produces no error, no log line, and a normal-looking
+  tally. It surfaces only when a human notices the sheet is holding something it shouldn't.
+- **Write the reason string so it can be falsified.** "Owner self-manages, pending <name>" stayed
+  plausible for two weeks precisely because it described a real hold — just not one that still
+  covered those rows. A reason naming the predicate it failed would have been checkable.
+
+## An approval expires once the ask it authorised has gone out
+
+A banked approval on a review sheet means "do this thing". Nothing retired it, so a replayed
+approval re-queued the same outbound ask every cycle indefinitely — on one sheet, five rows carried
+a two-week-old approval, had already been emailed twice, and were queued for a third.
+
+The fix is a **fourth verdict state**, not a deletion: the replay reads an approval as *sent* when
+the outreach column shows a send dated on or after the approval. The send population filters on the
+approval prefix, so sent rows drop out with no change to the email generator.
+
+- **Do not delete the disposition to stop the re-send.** The disposition store is also the dataset
+  behind approval-rate analysis; deleting entries to change routing behaviour corrupts it. Add a
+  state, keep the history.
+- **Scope the expiry to the tabs where an approval means "notify someone".** On an auto-fix tab the
+  same word means "make this write"; expiring one because an unrelated email went out would
+  silently cancel an approved write.
+- **An approval that postdates the last send is honoured** — that is a deliberate re-send, not a
+  stale verdict.
+- **Parse the display column defensively.** It carries no year, and free-text provenance lives in
+  the same cell. Infer the year against the sheet's own date, or a December send read from a January
+  sheet revives a spent approval.
+
+## The reviewer's own dispositions are the evidence for changing a rule's routing
+
+Routing — auto-fix versus ask-a-human versus review — is usually set once by judgement and never
+revisited. Meanwhile every disposition the reviewer gives is banked. Reading it back per rule
+answers a question nobody asks: which shapes has she approved consistently enough to stop asking
+about, and which has she never once approved?
+
+On the first run it found no promotion candidate and two defects: a review rule with **zero
+approvals in 47 dispositions**, and a **live auto-fix rule declined more often than approved**.
+
+- **An approval is not the same act on every tab.** On an auto-fix tab it authorises a write; on a
+  field tab it authorises an email. A heavily-approved *field* rule is evidence the ask is worth
+  sending, never that a write is safe — so it cannot be promoted to auto-fix on that evidence at
+  all. Promotion there means auto-queueing the ask.
+- **Count batches, not rows.** Dispositions arrive in batches of near-identical records dismissed
+  with one sentence, so row count overstates the evidence by an order of magnitude. Distinct
+  decision dates is the honest denominator.
+- **Evidence bars are asymmetric.** A minimum-n bar exists to stop premature *promotion*; it must
+  not suppress a warning about a rule already writing to production. Check "live rule, low approval"
+  before the n bar, or the one finding with a write behind it hides as "too little evidence".
+- **Unrecognised notes are excluded from the rate, never folded into declines.** A rule whose notes
+  are mostly unparseable has no measured approval rate — it has a vocabulary problem.
+- **Look for a shared cause across the flags before acting on them separately.** Both findings above
+  traced to one upstream routing decision: 41% of every decline on record carried the same reason.
+  Fixing that one thing likely retires both.
+- **This is evidence for a conversation, never an automatic promotion.** Routing changes by ruling.
