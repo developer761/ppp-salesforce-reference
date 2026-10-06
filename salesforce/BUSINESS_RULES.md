@@ -478,6 +478,44 @@ treat the family value as one signal among them rather than the answer.
 
 - Sales-tax rate is **`ServiceTerritory.TaxRate__c`** (geographic). There is no per-licensee/brand rate and no separate tax object.
 
+### ⚠️ A Service Territory carries the printed licence AND the tax rate — a cross-state zip move is a compliance event
+
+Two territory fields reach the customer, and neither is derived from the job's state:
+
+- **`ServiceTerritory.Licenses__c`** (Text) — the licence line printed on quotes, contracts and invoices.
+- **`ServiceTerritory.TaxRate__c`** (Percent) — the rate charged. `WorkOrder.Tax_Rate__c` is a formula on it.
+
+Both are properties of whichever territory the zip resolves to. So moving a zip into a territory in a
+**different state** silently swaps the licence the customer sees and the rate they are charged —
+no error, no validation, nothing in the UI that marks it as a cross-border move.
+
+Measured case: a band of out-of-state zips was reassigned to an adjacent in-state territory for
+coverage reasons after the original territory was retired. Two consequences, neither noticed at the
+time and neither carried in the ticket that authorised the move:
+
+- Documents printed **only the receiving territory's licence**. The origin state's licence number was
+  absent from `Licenses__c` entirely, so nothing state-correct could print even in principle.
+- Work orders inherited the receiving territory's tax rate — about **2 points higher**. Most rows
+  showed `Tax = 0` (these services are frequently untaxed), which hid the problem; but where tax
+  *was* assessed it was assessed at the wrong state's rate. Over ~20 months the assessed rows'
+  `SUM(Tax) / SUM(subtotal)` came to exactly the receiving territory's rate.
+
+Notes for auditing this:
+
+- **`ServiceTerritory` has no field history.** A `Licenses__c` edit cannot be dated after the fact.
+  Historical generated PDFs are the only evidence of what the string used to contain — and in this
+  case they proved a licence had silently dropped out of it.
+- **`Licenses__c` is free text and can hold several licences.** A territory legitimately operating
+  across a state line needs every applicable number in the string.
+- **A licence belongs to the territory's legal entity** (`Company_Name__c`). Do **not** copy a
+  sibling territory's licence number across to patch this — adjacent territories can bill under
+  different legal entities, and printing another entity's licence is worse than printing none.
+- The routing decision and its licence/tax consequences are made by different people at different
+  times. Whenever a zip crosses a state line, check both — the booking consequence tends to get
+  thought through and documented, the licence and tax consequences do not.
+- A remedy may be document-side rather than territory-side (render the correct licence for those
+  zips). Note that this fixes the licence and leaves `TaxRate__c` untouched.
+
 ### ⚠️ ZIP → Service Territory — which zip routes the job, and which one the customer sees
 
 Three different zip fields are in play and they are routinely confused. Only one of them is
