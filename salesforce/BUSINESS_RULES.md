@@ -1186,3 +1186,34 @@ checking: aggregates must be pulled with `--result-format json` (CSV blanks the 
 `OpportunityTeamMember.TeamMemberRole` stores abbreviated values — `Account Mgr`, `Project Mgr`,
 `Partner Mgr` — so querying the spelled-out form returns zero rows silently, which is
 indistinguishable from a failed load.
+
+## `Current_Hatch_Campaign__c` — which values mean the customer is being auto-messaged
+
+The field mixes automation output with hand-entered account-manager notes, and the distinction is
+what separates a defect from normal use.
+
+| Value | Meaning | Written by |
+|---|---|---|
+| `Quote Sent`, `Quote Sent (Secondary)`, `Waiting on Other Quotes` | **the customer IS enrolled in SMS auto-messaging** | flow (`Quote Sent`) / AM by hand (others) |
+| `AM F/U` | qualifies for AM follow-up, deliberately **NOT** auto-messaging | flow, for specifically routed owners; AM otherwise |
+| `Exempt`, `Manual F/U (No Hatch Activity)`, `Not Triggered (Contract Sent)` | the enrolment flow's short-circuit branches | flow |
+| other values | AM working notes | AM, by hand |
+
+**The rule:** an auto-messaging value must only ever appear for an owner who is enrolled for
+follow-ups. A *manually* entered auto-messaging value on a non-enrolled owner is still a defect —
+the customer receives texts regardless of who typed it.
+
+**Blank is not a defect, and it means two different things.** For an owner not enrolled for either
+auto-messaging or AM follow-up, blank is the **correct permanent state**; only for an enrolled owner
+does blank mean "not yet triggered." **Never build a metric that reads a falling blank count as
+improvement** — most of the field population is correctly and permanently blank.
+
+**Any non-blank value is a latch.** The enrolment flow gates on "is the campaign field empty", so
+once anything is written the record can never be auto-enrolled by any later path. That makes writing
+a benign value a legitimate *protective* action — and makes an accidental write permanent.
+
+⚠️ **The enrolment picklist on User is not a safe proxy for "not auto-messaged."** At least one owner
+holds the follow-ups value *and* is fully enrolled via a hardcoded per-owner rule in the flow. The
+only reliable test is which flow rule routes that owner. A name-free integrity check that
+generalises: *any active owner holding an auto-messaging value whose enrolment picklist is not one of
+the enrolling values.*

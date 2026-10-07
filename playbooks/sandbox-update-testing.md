@@ -166,3 +166,38 @@ safe. Sandboxes are refreshed on their own cadence and user records are among th
 diverge.
 
 The detailed test playbook and per-run questionnaire live in the private project; this is the reusable shape.
+
+## `retrieve` returns a flow's LATEST version, not the one that is running
+
+`sf project retrieve start --metadata Flow:<name>` writes the **highest-numbered** version to disk.
+Where an unactivated **Draft** exists, that is what you get — not the active definition. The
+retrieved `<status>` element is no help either: it can read `Draft` for an org whose active version
+is `Active`.
+
+This is a quiet way to validate a change against the wrong baseline. A months-old forgotten Draft is
+invisible in the Setup flow list at a glance and indistinguishable from the active version on disk,
+so "the diff is exactly my change" can be true of the wrong starting point.
+
+- **List every version before assuming what is live** — query `Flow` on the Tooling API filtered by
+  `Definition.DeveloperName`, read `VersionNumber` + `Status`, and pull that Id's `Metadata`
+  directly for the definition that is actually running.
+- Two checks that both read the same retrieved file are **one check**. Confirm the baseline from the
+  org before counting a dry-run and a diff as independent evidence.
+
+### Deploying a Flow OVERWRITES an existing Draft rather than incrementing past it
+
+If a Draft already exists, a deploy **replaces it in place**: same version number, new record Id,
+and the previous Draft's contents are gone. It does **not** create the next version alongside it.
+An activated version stays in the version list and is recoverable; a Draft does not and is not.
+**Back up an existing Draft before deploying over it**, and do not expect the version number to move
+— a version list that looks unchanged after a successful deploy is the expected outcome, not a sign
+the deploy failed.
+
+### A forgotten Draft is worth reading before replacing it
+
+A Draft can encode a design decision nobody wrote down. One found dormant for nine months carried a
+better approach than the one about to be built, plus three defects that explained why it had never
+been activated: a condition group using AND across two equality tests on the *same* field (never
+satisfiable), a rule placed *after* the catch-all in a first-match-wins decision (unreachable), and
+matching on a name text field where every sibling rule used a record Id. Read the Draft, fix it, and
+ship that — rather than discovering later that you reimplemented it worse.
