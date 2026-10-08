@@ -1343,3 +1343,38 @@ dissolved; one had been explicitly ruled correct behaviour and was being re-rais
 - **A correction is also a finding.** "This flag is an artefact" is more valuable than the flag was,
   and it is the kind of thing that only surfaces when someone pushes back. Treat the pushback as the
   lever, not as a correction to absorb quietly.
+
+### A hedged note hardens into a constraint when it is relayed
+
+Second instance the same session, and the mechanism is worth separating out. The run-book said
+*"emails go to team X only"* and then, in the very next sentence, *"that is a live open question, not
+settled."* The owner-exclusion module said the same ruling had been scoped to a **different process**
+and was unresolved here. Relayed to the reviewer, all of that collapsed into one owner's rows being
+"unemailable" and "the largest unchaseable block on the sheet", with an escalation attached.
+
+Every part of it was false. The sent-mail record showed that person had received the ask **every
+cycle for over a year, including the most recent send**, and the code's team flag turned out to
+govern only two things — whether a manager is CC'd, and whether an attendance question is included.
+There was no recipient exclusion anywhere in the generator.
+
+- **A caveat does not survive relay.** "X, but that's unresolved" becomes "X" in one hop. If a note
+  carries a hedge, the hedge is the load-bearing half — quote it or don't use the note.
+- **Deliverability is an empirical question with an empirical answer.** Before asserting that someone
+  cannot be contacted, search the sent record. One query, and it is unambiguous.
+- **A flag's name is not its behaviour.** A boolean called `on_team` reads like an eligibility gate.
+  Grep for where it is actually *consumed* before describing what it does — here it set a CC address
+  and suppressed one question, nothing more.
+- **Two documents disagreeing is the finding.** Where a run-book and the module it describes
+  contradict each other, stop and resolve it rather than picking the one that reads more decisively.
+  The module won here, and it was also the one carrying the explicit "unresolved" marker.
+
+### Split a per-owner count by disposition before reporting it
+
+The same session reported one owner's 19 rows as an alarming backlog. Broken out: **8 already sent,
+8 already declined, 3 new.** That person was among the *most* chased on the sheet, not the least, and
+the genuinely largest block of unactioned work belonged to someone with fewer total rows and almost
+all of them new.
+
+A raw per-owner row count conflates *work owed* with *work already handled*, and the two run in
+opposite directions. Report the new/unreviewed column as the headline and keep the total as context —
+otherwise the people who have been chased hardest look like the problem.
