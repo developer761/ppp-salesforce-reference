@@ -795,7 +795,7 @@ See **"Who is opted out" is a four-field question** in `BUSINESS_RULES.md`.
 | ChangeOrderRelated__c | Change Order Related | Checkbox | Yes | — |
 | ColorCeiling__c | Ceiling Color | Lookup(PaintColor) | No | — |
 | ColorFloor__c | Floor Color | Lookup(PaintColor) | No | — |
-| ColorNotes__c | Color Notes | Text Area(32768) | No | Carries orphan-surface color overflow as text — see the surface-slot note below. |
+| ColorNotes__c | Color Notes | Text Area(32768) | No | **Structured machine text, not free prose.** Carries orphan-surface color overflow plus generated bookkeeping blocks in a fixed layout that several readers parse. See the surface-slot note and the format-contract note below — do not reformat. |
 | ColorOther__c | Other Color | Lookup(PaintColor) | No | **One shared slot for every non-standard surface.** See below. |
 | ColorTrim__c | Trim Color | Lookup(PaintColor) | No | — |
 | ColorWall__c | Wall Color | Lookup(PaintColor) | No | — |
@@ -864,6 +864,46 @@ See **"Who is opted out" is a four-field question** in `BUSINESS_RULES.md`.
 > Anything rebuilding per-surface color from Salesforce alone therefore **cannot** be complete for
 > orphan surfaces. Systems that collect these colors should keep their own per-surface record and
 > treat the Salesforce write as the outbound copy, not the source.
+
+> #### `ColorNotes__c` holds STRUCTURED machine text, not free prose — do not reformat it
+>
+> The field looks like a notes box and is not one. The colour tool writes a fixed layout into it and
+> several readers parse that layout back out, so the **exact wording is a contract**. Every row
+> already stored carries the current shape, so any change has to be additive — never a swap.
+>
+> Written in this order, per line item:
+>
+> ```
+> {AreaLabel__c}:                                   <- one room header, only if the label exists
+> Cabinets: White Dove (OC-17) - Satin              <- orphan colours, 2+ orphan case only
+>                                                   <- blank line separates every block
+> No finish chosen - please confirm with the customer:
+>   Trim                                            <- TWO-SPACE indent
+> Customer selected "Don't paint this surface" on Walls.
+> Customer notes: {the customer's own free text}
+> ```
+>
+> There are four such heading blocks (a finish Salesforce cannot store, a finish not recognised, a
+> colour picked with no finish, a product line not recognised). Content is capped near 30,000 chars
+> with a truncation marker, and cleared to null when a re-edit leaves the line with nothing.
+>
+> **Load-bearing tokens.** Change any of these and readers fail *silently* — no error, just dropped
+> or duplicated data:
+>
+> | Token | What breaks |
+> |---|---|
+> | the literal `Customer notes:` | the pivot splitting machine text from the person's words |
+> | the two-space indent under a heading | internal bookkeeping leaks into customer-facing text and into order quantities |
+> | ` - ` (space, em dash, space) before a finish | the marker that identifies a line as machine-written |
+> | a trailing `(CODE)` | same marker, second half |
+> | the surface prefix | must match the orphan-surface vocabulary above |
+> | the "Don't paint this surface" sentence | matched literally; curly quotes break it and the line restacks on every re-submit |
+>
+> **For consumers:** treat the field as two layers. The machine lines are the only structured record
+> of orphan-surface colours (see the routing table above). The customer's own words are whatever
+> follows `Customer notes:`. Showing the raw field to a user exposes internal bookkeeping; parse it.
+> Free-text searching it for a keyword also matches our own generated sentences, not just what a
+> person typed.
 
 > #### `AreaLabel__c` is often blank — use `ProductName__c` for the room
 >
