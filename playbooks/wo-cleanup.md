@@ -1275,5 +1275,71 @@ approvals in 47 dispositions**, and a **live auto-fix rule declined more often t
   are mostly unparseable has no measured approval rate — it has a vocabulary problem.
 - **Look for a shared cause across the flags before acting on them separately.** Both findings above
   traced to one upstream routing decision: 41% of every decline on record carried the same reason.
-  Fixing that one thing likely retires both.
 - **This is evidence for a conversation, never an automatic promotion.** Routing changes by ruling.
+
+⚠️ **Both of those "defects" turned out to be artefacts of the tool itself.** Read the next section
+before acting on any rate this produces.
+
+## An approval rate must be scoped to the population the rule can still reach
+
+A disposition history is append-only. Routing is not. Once a rule stops being able to fire on some
+population — an owner group excluded outright, an owner group whose auto-fix rows are re-routed to
+a human, a corp parked pending a decision — every disposition ever given on that population
+describes a rule that no longer exists. Fold them into the current rate and the arithmetic is
+measuring the past.
+
+The effect is perverse: **every routing improvement permanently poisons the statistics for the rule
+it improved.** You exclude the owners whose rows the reviewer always declined, the rule gets better,
+and the tool goes on reporting the decline rate those owners produced — then recommends retiring it.
+
+Both headline findings from the first run dissolved under this check:
+
+- The "live auto-fix rule declined more often than approved" — **every single decline was one
+  owner's rows**, and that owner had since moved to flag-only routing, so their rows could no longer
+  reach the auto-fix path at all. Scoped to what the rule now sees: **100% approval, zero declines.**
+- The "zero approvals in 47 dispositions" retirement candidate — **41 of 47 were owners now dropped
+  outright**, plus 4 from a corp parked pending an unanswered question. Scoped: **n=2.** The rule was
+  not broken; it was blocked on one question, and retiring it would have deleted the only thing
+  surfacing that queue.
+
+Rules for doing this correctly:
+
+- **Grade each disposition against today's routing, not the routing when it was given.** The test is
+  "could a row like this still reach this tab?" — exclusion list, re-route rule, and parked
+  populations all answer it.
+- **Print the excluded evidence; never drop it silently.** The goal is to stop stale rows distorting
+  a rate, not to hide decisions. An unauditable rate is worse than a wrong one, because nobody can
+  tell which it is.
+- **Keep the old behaviour behind a flag and use it as a positive control.** If the unscoped mode
+  does not reproduce the pre-change output exactly, the change did more than intended.
+- **Be conservative where you cannot prove exclusion.** A carve-out keyed on a field that was not
+  banked at disposition time (status, say) should keep the row as in-path rather than discard it —
+  shrinking a denominator on a guess manufactures confidence.
+- **Bank the attribution at disposition time.** The only reason a live lookup was needed is that the
+  decision store recorded the record and the rule but not the owner. Re-deriving context later is
+  the same failure as re-deriving which question an email asked: the fact is only reliably knowable
+  where the event happened.
+
+⚠️ **And a reviewer's wording is not the code's vocabulary.** A note reading "self-managed" meant
+*this person manages their own closeouts* — the re-routed group — while the codebase used
+`SELF_MANAGED` for a different, strictly-excluded group. A frequency report surfacing the note text
+made the two look like one thing, which is what produced both bad findings. Resolve group membership
+from the module that defines it, never from free-text notes.
+
+## A prior session's finding is a hypothesis, not a conclusion
+
+Process notes accumulate open threads, and the longer they sit the more they read as settled fact.
+Handing a reviewer a list of inherited findings as if they were current produced this exchange:
+*"you're flagging things that aren't valid, I'm not sure what's changed."* Two of three had already
+dissolved; one had been explicitly ruled correct behaviour and was being re-raised as a defect.
+
+- **Re-verify before relaying.** Cheapest possible check against live data, per finding, before it
+  reaches the reviewer. A stale finding costs more than no finding, because it spends the reviewer's
+  trust and their time arguing with a ghost.
+- **Record rulings where the next run will read them.** When a reviewer rules that a flagged
+  behaviour is in fact correct, write that into the rule record with an explicit do-not-re-raise
+  marker — not just into the session log. Otherwise the same note regenerates the same false finding
+  on the next cycle.
+- **A correction is also a finding.** "This flag is an artefact" is more valuable than the flag was,
+  and it is the kind of thing that only surfaces when someone pushes back. Treat the pushback as the
+  lever, not as a correction to absorb quietly.
