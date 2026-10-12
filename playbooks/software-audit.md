@@ -848,3 +848,155 @@ they are the only one who can.
 The general shape: an automation may state what it observed, but should not infer *why* the world looks
 different — particularly when the inference gets written somewhere durable and reads as fact
 afterwards.
+
+---
+
+## Count both directions, and know which side your number comes from
+
+A licence report usually mixes two kinds of figure, and only one of them can notice a missing
+person:
+
+| Figure | Derived from | A person absent from the register is… |
+|---|---|---|
+| "seats in use" from a live platform query | the platform | **impossible** — the platform knows them |
+| a per-row roster count on the spreadsheet | names written on the sheet | **invisible** |
+
+A roster block asks *"for each name here, did this person hold a licence?"* It never asks the
+reverse. Anyone never added to the sheet is therefore permanently uncountable, and the only
+visible symptom is that the live figure and the roster total disagree — which nothing reconciles
+unless you write that check.
+
+Found this way: an active user holding a full licence for over two months with no row at all.
+Nothing else caught it — the licence record existed, the cost was allocated, and the live count
+included them.
+
+**Dedupe the reverse check by the person, not by the email address.** Integration and system
+users frequently carry a real person's email on their user record, and each still consumes its
+own licence. Collapsing by email merges them and *undercounts real seats* — it made a correct
+total look overstated. Filter to active users instead; that is what correctly suppresses the
+`-inactive` / `-portal` duplicate shells, which are the same person twice and legitimately have
+no row of their own.
+
+---
+
+## Monthly counts need ANY-OVERLAP, not a single anchor date
+
+For "how many licences did we have in month M", test whether the licence period overlaps the
+month at all — not whether it was held on one chosen day.
+
+| Rule | Mid-month joiner | Mid-month leaver |
+|---|---|---|
+| held on the **last** day | ✓ counted | ✗ dropped a month early |
+| held on the **first** day | ✗ delayed a month | ✓ counted |
+| **any overlap** | ✓ | ✓ |
+
+The business rule that settles it: **a licence removed mid-month is still paid for that month and
+drops off the next.** A month-end anchor contradicts that; a month-start anchor fixes leavers but
+pushes every joiner a month late. Only any-overlap satisfies both.
+
+It is also the only rule consistent with prorated cost records — a leaver who cost money in the
+month must be counted in that month, or the roster contradicts the ledger.
+
+⚠️ Changing this rule retroactively alters closed months. Check which months move and whether the
+spreadsheet's own history reproduces under *any* of the candidate rules before adopting one: if
+pre-automation months match none of them, they were maintained on a different basis and are not
+trustworthy to trend.
+
+---
+
+## Never write a total or summary cell — it is a formula
+
+Summary rows are typically `=SUM(...)`. Writing a computed value into one clobbers the formula and
+the total silently stops tracking its rows — it will then be correct on the day it is written and
+wrong afterwards.
+
+A formula also **survives a row insertion**; a hardcoded value does not. When a row was later
+inserted into the block, the surviving formulas expanded and picked it up automatically, while the
+two months that had been overwritten with values stayed stale — and the summary row's own position
+shifted, so the next run looked for it in the wrong place.
+
+Have the script **report** the expected total and flag disagreement, and write nothing.
+
+---
+
+## A boundary that does not line up may be deliberate
+
+When one date is earlier than a related date, three different events are usually involved:
+**billing stop**, **access removal**, and **termination**. They rarely coincide.
+
+An allocation period ending before its software period is the normal shape of an offboarding: the
+charge stops when billing stops, access lingers while removal is arranged, and the gap is
+**absorbed cost** — the seat is on a contract and was paid either way, so it is not chargeable
+onward.
+
+A sweep for "cost with no allocation covering the month" reports these as gaps. **They are not.**
+Three were "fixed" by extending the periods and all three had to be reverted, having charged
+cost that had deliberately been absorbed.
+
+Triage the sweep instead of applying it:
+
+| Signal | Absorbed tail (leave alone) | Genuine gap (fix) |
+|---|---|---|
+| Allocation record | exists, ends earlier | **missing entirely** |
+| Staff status | terminated / offboarding | active |
+| Intent field | usually explains it | typically empty |
+
+The same sweep did find real gaps — pooled licensee buckets and an active new hire with no
+allocation record at all. The distinction that mattered was *record exists but ends early* versus
+*no record at all*, and applying one remedy to both classes was the error.
+
+### Read the record's own notes before changing it
+
+All three wrongly-"fixed" records already explained themselves in their notes field. Check whether
+field-history tracking is actually enabled before assuming provenance exists elsewhere: on these
+objects the history table held only `created` rows — **no fields tracked at all** — so the notes
+field was the only record of intent that existed.
+
+### Date-change notes, newest first
+
+Where no field history exists, require a dated note for every value change:
+`YYYY/MM/DD <initials> - <reason the value changed>`, newest line prepended.
+
+**Write the reason, not the delta.** The delta is reconstructible from the source records; the
+reason is not. **Always prepend — never replace:** existing human notes are exactly the context
+that prevents the next wrong write.
+
+---
+
+## A vendor API's field names may not match its own UI
+
+Mapping a vendor's fields to your own columns is not a naming exercise — verify it against data.
+In one tracking-number API the field literally named `campaign` returned the **medium** value,
+byte-identical to the `medium` field on every record; the UI's campaign lived in a field named for
+something else entirely.
+
+⚠️ **Never infer a mapping from a single record where two candidate fields hold the same value.**
+The one record available for checking had the same string in both the title field and the campaign
+field, so it could not discriminate — and across every other populated record the two matched on
+**zero**. Two wrong mappings were shipped before a multi-record comparison settled it.
+
+Also expect vendor-side inconsistency in the values themselves (mixed casing of the same token).
+Normalise before grouping or pivoting.
+
+---
+
+## Prove a new check before believing its first clean result
+
+A check that reports "none" may be correct or may be broken; the output is identical. Before
+trusting one, **break the input deliberately** and confirm it fires.
+
+⚠️ **A historical snapshot stops working as a control once the data is fixed.** Re-running a check
+against a past month after correcting the underlying dates returned zero findings — the anomaly
+was gone from history. Inject a synthetic record instead: a cloned duplicate, a deliberately
+wrong value, a blank key, and assert each class is detected.
+
+This is also how to catch a regression in your own change. Reusing an existing helper that omitted
+a `state` filter meant deleted account-holders dropped out of a lookup, an unknown holder defaulted
+to "active", and a ruled-out exclusion was re-reported. The check had just been written and would
+have shipped had its first real output not been read against expectations.
+
+**State what a check covers in the same breath as its result.** Read-back after a write proves the
+value you intended reached the cell — not that the value was right. Reporting "verified" for a
+narrow check invites far more confidence than it earns; name the axis that is *not* tested, and
+where a source cannot be reached at all, say so in the output so "up to date" never overstates its
+own scope.
