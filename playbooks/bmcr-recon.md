@@ -66,15 +66,42 @@ On the 5th of each month (±4 days), a launchd job fires the reconciliation scri
 
 | Value | Meaning |
 |---|---|
-| `Approved` | Confirmed, fully processed |
-| `Submitted` | Pending BM processing |
-| `Dbl_Check` | Needs secondary review |
-| `No Points Awarded` | BM denied points (spaces, not underscores) |
+| `Approved` | Points and volume both credited |
+| `Submitted` | Pending processing by the manufacturer |
+| `Dbl_Check` | Internal working state — **no longer written to SF** (see below) |
+| `No Points Awarded` | Volume credited, no points (spaces, not underscores) |
+| `No Gallons Awarded` | Points credited, no volume (spaces, not underscores) |
 | `Rejected` | Rejected submission |
-| `No_Paint` | Not a qualifying paint purchase |
+| `No_Paint` | Nothing credited — not a qualifying purchase |
 | `No_Receipt` | No receipt on file |
 
-> **Critical:** `No Points Awarded` uses spaces. Using underscores (`No_Points_Awarded`) will cause bulk write failures — SF restricted picklist rejects the value.
+> **Critical:** `No Points Awarded` uses spaces. Using underscores (`No_Points_Awarded`) will cause bulk write failures — SF restricted picklist rejects the value. `No Gallons Awarded` follows the same convention deliberately: **match the sibling value's casing rather than the file's other conventions**, because the person typing it will copy the one next to it.
+
+### The end status is a property of what was AWARDED, not of where the row sat
+
+A status map keyed on the pipeline's own staging values will drift from reality, because a staging value records where *we* were in the process and says nothing about what the counterparty did. Key it on the awarded quantities instead and it becomes a total function over a 2×2:
+
+| points | volume | status |
+|---|---|---|
+| none | none | nothing credited |
+| none | some | volume-only |
+| some | some | fully credited |
+| some | none | points-only |
+
+**Points-only is a real state, not a data gap.** Roughly 1% of credited rows per statement (103 one month, 18 the next, across 10+ distributors) carry points with no volume, because points accrue on an eligible-spend subtotal and some eligible items have no volume equivalent. ⚠️ **Never infer that state from an empty volume field**: 35,281 records in this org matched that filter and almost all of them predate the field's existence entirely.
+
+**Consolidating review buckets:** the reviewer asked for three separate "needs checking" statuses to collapse into one. The retired value then needs a destination for records already sitting in it — 20 here, of which the ones still inside the reporting window self-heal on the next run and only the aged-out ones need a decision.
+
+### A blank numeric field should mean exactly one thing
+
+If the process writes a value only when it is non-zero, an empty cell means both *"the counterparty awarded none"* and *"we never looked"* — and the two become indistinguishable, which is how 8,593 records here ended up unclassifiable. Write an explicit `0` so blank can mean "never processed".
+
+Two findings from implementing it:
+
+- **The guard belongs on the EVIDENCE, not on the target field.** Write `0` only when the statement actually carries the column that would have reported a value. The counterparty added that column mid-year; on an earlier statement its absence means UNKNOWN. A guard on "is the SF field blank?" protects the wrong thing.
+- **Do not special-case the field against its own siblings.** The first version refused to overwrite a populated value, which would have made this the only quantity in the process that never overwrites. Measured before removing it: of 3,573 statement rows with a blank value, **zero** mapped to a record holding a real one — the case being guarded against did not occur.
+
+The backfill recovered 26 records where the counterparty *had* awarded volume that was never recorded, alongside 2,911 genuine zeros.
 
 ---
 
@@ -981,3 +1008,47 @@ launchd job (`com.ppp.bmcr-recon.plist`):
 - Self-gates: only proceeds on days 1–9 of the month
 - "Already ran this month" guard prevents duplicate runs
 - If no BMCR email found by day 9 → notifies admin via DM, exits
+
+---
+
+## Nothing handed to a reviewer may land where their inaction is unrecoverable
+
+Every row on a review packet says *"this needs an action from you"*. If the reviewer takes none, the row must still come back next cycle — otherwise their silence is indistinguishable from their agreement, and the record leaves scope permanently.
+
+**The test is a conjunction, and both halves are load-bearing:** the record is in an unresolved status **and** this run did not touch it. On one packet 368 records were in an unresolved status and **345 of them were about to be reprocessed anyway** — a matched record self-heals, even out of a retired status. Testing status alone would have carried 368 rows and buried the ~23 that mattered.
+
+**Run the check at the END of the run, not the start.** Then *"did this run touch it?"* is an **observation** — the match-path column the run writes — rather than a prediction. The obvious start-of-run proxy, *"is its identifier on the incoming statement?"*, is precisely the identifier the recovery phase exists because it cannot be trusted: 58 records that cycle were matched via amount/date/submission-id/fuzzy paths after their invoice numbers proved mis-transcribed, and the proxy would have declared every one of them stranded.
+
+**Three more rules the first three versions of this check got wrong:**
+
+- **A settled status is not stranded.** The first version flagged those too, on the theory that silence would read as agreement — and stranded 67 rows including ones the reviewer had already resolved correctly. A review tab is partly a *report* of what was found, not only a list of requests.
+- **Read the live system, not the packet's own column.** The packet's status column is a snapshot from build time and goes stale the moment the reviewer starts working. The question is where the record sits *now*.
+- **Rows with no record on the system side cannot be stranded in one.** Their recurrence is governed by a different mechanism — comparing this statement against the previous one — so their empty status column is expected, not a finding.
+
+**Show the age; do not make it a cutoff.** The carried set is not one thing: one record had been unresolved for 15 months and had never once appeared on a statement, while most were weeks old and plausibly still in flight, since a late submission lands on a later statement. Nobody knows where the line is, so surface the age and let the reviewer draw it — a guessed threshold hides the 15-month record among the three-week ones.
+
+**Carry the reviewer's own notes across with the row.** Otherwise it arrives stripped of the reason it was flagged and they re-derive work already done — the same failure the mechanism exists to prevent, one level down. Note that for records that exist on the system side, their notes may already live *in the system* rather than only on the packet; check before building a preservation mechanism for something that is already durable.
+
+---
+
+## Two guards that answer different questions
+
+A scheduled job here re-processed a statement it had already reconciled, end to end, and then marked the period complete — locking itself out for the rest of the month. An "already ran this period" guard was in place and passed, because it asks about **the calendar period the job fired in**, which was genuinely fresh. Nothing asked about **the input**.
+
+The fetch returned whichever file was newest and had no notion of whether that input had been consumed before. **When a job is keyed on an external input that arrives on its own schedule, "have I run recently" and "have I already processed this input" are different questions, and a guard for one is not a guard for the other.** The gap between them is exactly where the incident lives.
+
+Two details worth copying:
+
+- **Refuse, do not silently re-run** — and make the override explicit rather than automatic.
+- **Degrade open, not closed.** A missing or corrupt history file should allow the run: the guard exists to prevent a *repeat*, and with no history there is nothing to repeat. Failing closed means a fresh install can never run at all.
+
+---
+
+## Appending to a short text field
+
+A reviewer asked for a running note recording what changed each cycle. The field was 225 characters and notes accumulate at roughly 48 characters each, so about three fit.
+
+**Do not truncate silently, and do not drop the reviewer's own words.** If the append would overflow, keep the values, leave the existing note intact, and *report* the skip. A dropped note that is visible beats a rejected write that is not — an over-length value makes the bulk API reject the whole row, and a success count will not reveal it.
+
+**A fill is not a change.** If the system never held a value, there is no delta to report — only an actual movement earns a note. Otherwise the first run after any backfill generates a note on every record it touched.
+
